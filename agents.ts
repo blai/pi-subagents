@@ -13,7 +13,14 @@ import { parseFrontmatter } from "./frontmatter.js";
 
 export type AgentScope = "user" | "project" | "both";
 
-export type AgentSource = "builtin" | "user" | "project";
+/**
+ * Agent source priority (lowest → highest):
+ *   builtin  — shipped inside pi-subagents itself
+ *   package  — registered at runtime by external pi packages via EventBus
+ *   user     — ~/.pi/agent/agents/
+ *   project  — .pi/agents/ in the nearest ancestor directory
+ */
+export type AgentSource = "builtin" | "package" | "user" | "project";
 
 export interface AgentConfig {
 	name: string;
@@ -216,14 +223,40 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 
 const BUILTIN_AGENTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "agents");
 
+/**
+ * Extra agent directories registered at runtime via EventBus.
+ * Entries are treated as builtins — user/project agents override them.
+ * Packages register dirs during `session_start` by emitting:
+ *   pi.events.emit("subagents:register-agent-dir", { dir: "/abs/path", source: "builtin" })
+ */
+const extraAgentDirs: Map<string, AgentSource> = new Map();
+
+/** Register an extra agent directory. Safe to call multiple times with the same dir. */
+export function registerExtraAgentDir(dir: string, source: AgentSource = "package"): void {
+	extraAgentDirs.set(dir, source);
+}
+
+/** Unregister a previously added extra agent directory. */
+export function unregisterExtraAgentDir(dir: string): void {
+	extraAgentDirs.delete(dir);
+}
+
+/** Clear all extra agent directories (e.g. on session reset). */
+export function clearExtraAgentDirs(): void {
+	extraAgentDirs.clear();
+}
+
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
 	const builtinAgents = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+	const packageAgents = Array.from(extraAgentDirs.entries()).flatMap(([dir, source]) =>
+		loadAgentsFromDir(dir, source),
+	);
 	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
-	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
+	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents);
 
 	return { agents, projectAgentsDir };
 }
@@ -240,6 +273,9 @@ export function discoverAgentsAll(cwd: string): {
 	const projectDir = findNearestProjectAgentsDir(cwd);
 
 	const builtin = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+	const pkg = Array.from(extraAgentDirs.entries()).flatMap(([dir, source]) =>
+		loadAgentsFromDir(dir, source),
+	);
 	const user = loadAgentsFromDir(userDir, "user");
 	const project = projectDir ? loadAgentsFromDir(projectDir, "project") : [];
 	const chains = [
@@ -247,5 +283,5 @@ export function discoverAgentsAll(cwd: string): {
 		...(projectDir ? loadChainsFromDir(projectDir, "project") : []),
 	];
 
-	return { builtin, user, project, chains, userDir, projectDir };
+	return { builtin, package: pkg, user, project, chains, userDir, projectDir };
 }

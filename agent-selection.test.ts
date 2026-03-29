@@ -4,11 +4,11 @@ import { mergeAgentsForScope } from "./agent-selection.ts";
 
 type TestAgent = {
 	name: string;
-	source: "builtin" | "user" | "project";
+	source: "builtin" | "package" | "user" | "project";
 	systemPrompt: string;
 };
 
-function makeAgent(name: string, source: "builtin" | "user" | "project", systemPrompt: string): TestAgent {
+function makeAgent(name: string, source: "builtin" | "package" | "user" | "project", systemPrompt: string): TestAgent {
 	return { name, source, systemPrompt };
 }
 
@@ -69,5 +69,43 @@ describe("mergeAgentsForScope", () => {
 		const result = mergeAgentsForScope("both", [] as any, projectAgents as any, builtinAgents as any);
 		assert.equal(result.length, 1);
 		assert.equal(result[0]?.source, "project");
+	});
+
+	it("package agents override builtins with the same name", () => {
+		const builtinAgents = [makeAgent("scout", "builtin", "builtin prompt")];
+		const packageAgents = [makeAgent("scout", "package", "package prompt")];
+		const result = mergeAgentsForScope("both", [] as any, [] as any, builtinAgents as any, packageAgents as any);
+		assert.equal(result.length, 1);
+		assert.equal(result[0]?.source, "package");
+		assert.equal(result[0]?.systemPrompt, "package prompt");
+	});
+
+	it("user agents override package agents with the same name", () => {
+		const packageAgents = [makeAgent("scout", "package", "package prompt")];
+		const userAgents = [makeAgent("scout", "user", "user prompt")];
+		const result = mergeAgentsForScope("both", userAgents as any, [] as any, [] as any, packageAgents as any);
+		assert.equal(result.length, 1);
+		assert.equal(result[0]?.source, "user");
+		assert.equal(result[0]?.systemPrompt, "user prompt");
+	});
+
+	it("priority order is builtin < package < user < project", () => {
+		const builtin = [makeAgent("scout", "builtin", "builtin")];
+		const pkg = [makeAgent("scout", "package", "package")];
+		const user = [makeAgent("scout", "user", "user")];
+		const project = [makeAgent("scout", "project", "project")];
+		// All four compete — project wins
+		const result = mergeAgentsForScope("both", user as any, project as any, builtin as any, pkg as any);
+		assert.equal(result.length, 1);
+		assert.equal(result[0]?.source, "project");
+	});
+
+	it("package agents are visible in both scope when user/project have no override", () => {
+		const packageAgents = [makeAgent("workflow-agent", "package", "workflow prompt")];
+		const userAgents = [makeAgent("other", "user", "user prompt")];
+		const result = mergeAgentsForScope("both", userAgents as any, [] as any, [] as any, packageAgents as any);
+		assert.equal(result.length, 2);
+		assert.ok(result.find((a) => a.name === "workflow-agent" && a.source === "package"));
+		assert.ok(result.find((a) => a.name === "other" && a.source === "user"));
 	});
 });

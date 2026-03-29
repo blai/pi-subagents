@@ -208,7 +208,7 @@ export function renderList(
 			const modelDisplay = modelRaw.includes("/") ? modelRaw.split("/").pop() ?? modelRaw : modelRaw;
 			const nameText = isCursor ? theme.fg("accent", agent.name) : agent.name;
 			const modelText = theme.fg("dim", modelDisplay);
-			const scopeLabel = agent.kind === "chain" ? "[chain]" : agent.source === "builtin" ? "[builtin]" : agent.source === "project" ? "[proj]" : "[user]";
+			const scopeLabel = agent.kind === "chain" ? "[chain]" : agent.source === "builtin" ? "[builtin]" : agent.source === "package" ? "[pkg]" : agent.source === "project" ? "[proj]" : "[user]";
 			const scopeBadge = theme.fg("dim", scopeLabel);
 			const descText = theme.fg("dim", agent.description);
 
