@@ -36,7 +36,7 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
+import { compactForegroundDetails, findLatestSessionFile, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
 	buildSubagentResultIntercomPayload,
 	deliverSubagentIntercomMessageEvent,
@@ -117,6 +117,7 @@ export interface SubagentParamsLike {
 	share?: boolean;
 	control?: ControlConfig;
 	sessionDir?: string;
+	resume?: boolean;
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
 	artifacts?: boolean;
@@ -2125,6 +2126,44 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			sessionFileForIndex = createForkContextResolver(ctx.sessionManager, effectiveParams.context).sessionFileForIndex;
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
+		}
+
+		// resume: reload the latest session from sessionDir (SINGLE mode only).
+		if (effectiveParams.resume) {
+			// Requires sessionDir — without it there is no slot to resume from.
+			if (!effectiveParams.sessionDir) {
+				return {
+					content: [{ type: "text", text: "resume requires sessionDir. Provide the same sessionDir used in the prior call." }],
+					isError: true,
+					details: { mode: getRequestedModeLabel(effectiveParams), results: [] },
+				};
+			}
+			// Reject non-SINGLE modes — resume loads a single conversation history;
+			// chain and parallel runs each maintain their own per-step sessions via sessionDir.
+			if (!hasSingle) {
+				return {
+					content: [{ type: "text", text: "resume is only supported in SINGLE mode (agent + task). Chain and parallel modes manage their own per-step sessions via sessionDir." }],
+					isError: true,
+					details: { mode: getRequestedModeLabel(effectiveParams), results: [] },
+				};
+			}
+			// Reject fork + resume — fork branches from the parent leaf session;
+			// combining with resume produces contradictory semantics.
+			if (effectiveParams.context === "fork") {
+				return {
+					content: [{ type: "text", text: "resume and context: 'fork' cannot be used together. Use one or the other." }],
+					isError: true,
+					details: { mode: "single" as const, results: [] },
+				};
+			}
+			// Look for an existing session in the run-0 sub-dir (where SINGLE stores sessions).
+			// On first call the dir is empty — silently start fresh rather than error.
+			const singleRunDir = path.join(path.resolve(deps.expandTilde(effectiveParams.sessionDir)), "run-0");
+			const existingSession = findLatestSessionFile(singleRunDir);
+			if (existingSession) {
+				sessionFileForIndex = (idx?: number) => (idx === 0 ? existingSession : undefined);
+			}
+			// else: no prior session yet — sessionFileForIndex stays as () => undefined (fresh start)
 		}
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && effectiveParams.clarify === true;

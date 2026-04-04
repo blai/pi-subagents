@@ -747,8 +747,7 @@ export async function runSync(
 		};
 	}
 
-	const shareEnabled = options.share === true;
-	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
+	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || options.share === true;
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
 	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, skillCwd, runtimeCwd);
@@ -891,11 +890,11 @@ export async function runSync(
 		if (truncationResult.truncated) result.truncation = truncationResult;
 	}
 
-	if (options.sessionFile && (existsSync(options.sessionFile) || result.messages?.length)) {
-		result.sessionFile = options.sessionFile;
-	} else if (shareEnabled && options.sessionDir) {
-		const sessionFile = findLatestSessionFile(options.sessionDir);
-		if (sessionFile) result.sessionFile = sessionFile;
+	// Always surface sessionFile when a session was used, so callers can resume it.
+	const resolvedSessionFile = options.sessionFile
+		?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
+	if (resolvedSessionFile) {
+		result.sessionFile = resolvedSessionFile;
 	}
 
 	return result;
