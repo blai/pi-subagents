@@ -339,14 +339,16 @@ export async function runSync(
 		}
 	}
 
+	// Always surface sessionFile when a session was used, so callers can resume it.
+	const resolvedSessionFile = options.sessionFile
+		?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
+	if (resolvedSessionFile) {
+		result.sessionFile = resolvedSessionFile;
+	}
+
 	if (shareEnabled) {
-		const sessionFile = options.sessionFile
-			?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
-		if (sessionFile) {
-			result.sessionFile = sessionFile;
-			// HTML export disabled - module resolution issues with global pi installation
-			// Users can still access the session file directly
-		}
+		// HTML export disabled - module resolution issues with global pi installation
+		// Users can still access the session file directly via result.sessionFile
 	}
 
 	return result;

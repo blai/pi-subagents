@@ -83,6 +83,9 @@ export const SubagentParams = Type.Object({
 	sessionDir: Type.Optional(
 		Type.String({ description: "Directory to store session logs (default: temp; enables sessions even if share=false)" }),
 	),
+	sessionFile: Type.Optional(
+		Type.String({ description: "Resume a prior session by path (SINGLE mode only). The subprocess loads the full conversation history from this .jsonl file, so the agent picks up exactly where the previous call left off — no re-reading files. Useful for a persistent writer across loop iterations. Reviewers should never receive this; omit to keep them isolated with fresh context. Returns an error if the file does not exist." }),
+	),
 	// Clarification TUI
 	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution (default: true for chains, false for single/parallel). Implies sync mode." })),
 	// Solo agent overrides

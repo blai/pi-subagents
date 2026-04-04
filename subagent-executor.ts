@@ -62,6 +62,7 @@ export interface SubagentParamsLike {
 	clarify?: boolean;
 	share?: boolean;
 	sessionDir?: string;
+	sessionFile?: string;
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
 	artifacts?: boolean;
@@ -827,6 +828,48 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			sessionFileForIndex = createForkContextResolver(ctx.sessionManager, params.context).sessionFileForIndex;
 		} catch (error) {
 			return toExecutionErrorResult(params, error);
+		}
+
+		// sessionFile: resume a prior session (SINGLE mode only).
+		if (params.sessionFile) {
+			// Reject non-SINGLE modes — silently ignoring sessionFile in chain/parallel
+			// would mean history is not resumed, with no signal to the caller.
+			if (!hasSingle) {
+				return {
+					content: [{ type: "text", text: "sessionFile is only supported in SINGLE mode (agent + task). Use sessionDir for chain or parallel modes." }],
+					isError: true,
+					details: { mode: getRequestedModeLabel(params), results: [] },
+				};
+			}
+			// Reject fork + sessionFile — fork creates a branch from the parent leaf;
+			// combining with an explicit session file produces contradictory semantics.
+			if (params.context === "fork") {
+				return {
+					content: [{ type: "text", text: "sessionFile and context: 'fork' cannot be used together. Use one or the other." }],
+					isError: true,
+					details: { mode: "single" as const, results: [] },
+				};
+			}
+			// Validate existence and non-empty before spawning the subprocess.
+			if (!fs.existsSync(params.sessionFile)) {
+				return {
+					content: [{ type: "text", text: `sessionFile not found: '${params.sessionFile}'. Provide the sessionFile path returned by a prior subagent call.` }],
+					isError: true,
+					details: { mode: "single" as const, results: [] },
+				};
+			}
+			const stat = fs.statSync(params.sessionFile);
+			if (stat.size === 0) {
+				return {
+					content: [{ type: "text", text: `sessionFile is empty: '${params.sessionFile}'. The file may be from a crashed run. Omit sessionFile to start a fresh session.` }],
+					isError: true,
+					details: { mode: "single" as const, results: [] },
+				};
+			}
+			// Override sessionFileForIndex: always return the explicit file for index 0.
+			// Index > 0 is unreachable in SINGLE mode; the lambda returns undefined defensively.
+			const explicitFile = params.sessionFile;
+			sessionFileForIndex = (idx?: number) => (idx === 0 ? explicitFile : undefined);
 		}
 
 		const requestedAsync = params.async ?? deps.asyncByDefault;
