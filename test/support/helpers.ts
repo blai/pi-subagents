@@ -141,6 +141,7 @@ export const events = {
 				role: "assistant",
 				content: [{ type: "text", text }],
 				model,
+				stopReason: "stop",
 				usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
 			},
 		};

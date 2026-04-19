@@ -552,4 +552,44 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 0);
 	});
+
+	it("does not hang when the subagent leaves a grandchild holding stdout/stderr", async () => {
+		// Grandchild holds inherited stdio open after the child exits.
+		mockPi.onCall({
+			output: "Done",
+			leakyGrandchildSeconds: 30,
+		});
+		const agents = makeAgentConfigs(["echo"]);
+
+		const start = Date.now();
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+		const elapsed = Date.now() - start;
+
+		assert.equal(result.exitCode, 0);
+		assert.ok(
+			elapsed < 10_000,
+			`runSync should resolve in bounded time once the child exits (took ${elapsed}ms; grandchild would linger 30s)`,
+		);
+		assert.equal(getFinalOutput?.(result.messages), "Done");
+	});
+
+	it("does not hang when the subagent process keeps its event loop alive after the final message", async () => {
+		// Child emits its final message but keeps its own event loop alive.
+		mockPi.onCall({
+			output: "Done",
+			keepAliveAfterFinalMessageSeconds: 30,
+		});
+		const agents = makeAgentConfigs(["echo"]);
+
+		const start = Date.now();
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+		const elapsed = Date.now() - start;
+
+		assert.ok(
+			elapsed < 15_000,
+			`runSync should force-drain and resolve within the drain+kill budget (took ${elapsed}ms; child would linger 30s)`,
+		);
+		// Final output should still survive the forced drain.
+		assert.equal(getFinalOutput?.(result.messages), "Done");
+	});
 });

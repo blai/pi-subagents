@@ -15,6 +15,10 @@ export interface MockPiResponse {
 		stderr?: string;
 	}>;
 	echoEnv?: string[];
+	/** If set, keep inherited stdout/stderr open via a lingering grandchild. */
+	leakyGrandchildSeconds?: number;
+	/** If set, keep the child alive after its final message before exit. */
+	keepAliveAfterFinalMessageSeconds?: number;
 }
 
 export interface MockPi {
