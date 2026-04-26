@@ -114,6 +114,27 @@ describe("skills filesystem fallback", () => {
 		assert.equal(resolved[0]?.source, "project-package");
 	});
 
+	it("discovers skills from project settings npm package sources", () => {
+		const packageRoot = path.join(tempDir, ".pi", "npm", "node_modules", "@scope", "skill-package");
+		makePackageSkill(
+			packageRoot,
+			"project-settings-scoped-npm-package-skill",
+			"Project settings scoped npm package skill.",
+			"@scope/skill-package",
+		);
+		fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tempDir, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:@scope/skill-package@1.2.3"] }, null, 2),
+			"utf-8",
+		);
+
+		const { resolved, missing } = resolveSkills(["project-settings-scoped-npm-package-skill"], tempDir);
+		assert.deepEqual(missing, []);
+		assert.equal(resolved.length, 1);
+		assert.equal(resolved[0]?.source, "project-package");
+	});
+
 	it("discovers skills from the current cwd package", () => {
 		makePackageSkill(tempDir, "cwd-package-skill", "Cwd package skill.");
 
@@ -156,6 +177,75 @@ describe("skills filesystem fallback", () => {
 			fresh.clearSkillCache();
 			const discovered = fresh.discoverAvailableSkills(tempDir);
 			const skill = discovered.find((entry) => entry.name === "user-settings-package-skill");
+			assert.ok(skill);
+			assert.equal(skill?.source, "user-package");
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
+	it("discovers skills from user settings git package sources", async () => {
+		const fakeHome = path.join(tempDir, "fake-home");
+		const userAgentDir = path.join(fakeHome, ".pi", "agent");
+		const packageRoot = path.join(userAgentDir, "git", "github.com", "user", "repo");
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = fakeHome;
+			process.env.USERPROFILE = fakeHome;
+			makePackageSkill(packageRoot, "user-settings-git-package-skill", "User settings git package skill.");
+			fs.mkdirSync(userAgentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(userAgentDir, "settings.json"),
+				JSON.stringify({ packages: ["git:github.com/user/repo.git@main"] }, null, 2),
+				"utf-8",
+			);
+
+			const fresh = await importSkillsFresh();
+			fresh.clearSkillCache();
+			const discovered = fresh.discoverAvailableSkills(tempDir);
+			const skill = discovered.find((entry) => entry.name === "user-settings-git-package-skill");
+			assert.ok(skill);
+			assert.equal(skill?.source, "user-package");
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
+	it("discovers skills from user settings scoped npm package sources", async () => {
+		const fakeHome = path.join(tempDir, "fake-home");
+		const userAgentDir = path.join(fakeHome, ".pi", "agent");
+		const packageRoot = path.join(userAgentDir, "npm", "node_modules", "@scope", "skill-package");
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = fakeHome;
+			process.env.USERPROFILE = fakeHome;
+			makePackageSkill(
+				packageRoot,
+				"user-settings-scoped-npm-package-skill",
+				"User settings scoped npm package skill.",
+				"@scope/skill-package",
+			);
+			fs.mkdirSync(userAgentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(userAgentDir, "settings.json"),
+				JSON.stringify({ packages: [{ source: "npm:@scope/skill-package@latest" }] }, null, 2),
+				"utf-8",
+			);
+
+			const fresh = await importSkillsFresh();
+			fresh.clearSkillCache();
+			const discovered = fresh.discoverAvailableSkills(tempDir);
+			const skill = discovered.find((entry) => entry.name === "user-settings-scoped-npm-package-skill");
 			assert.ok(skill);
 			assert.equal(skill?.source, "user-package");
 		} finally {

@@ -210,9 +210,70 @@ function collectSettingsSkillPaths(cwd: string): SkillSearchPath[] {
 	return results;
 }
 
+function isSafePackagePath(value: string): boolean {
+	return value.length > 0
+		&& !path.isAbsolute(value)
+		&& value.split(/[\\/]/).every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function parseNpmPackageName(source: string): string | undefined {
+	const spec = source.slice(4).trim();
+	if (!spec) return undefined;
+	const match = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@(.+))?$/);
+	const packageName = match?.[1] ?? spec;
+	return isSafePackagePath(packageName) ? packageName : undefined;
+}
+
+function stripGitRef(repoPath: string): string {
+	const atIndex = repoPath.indexOf("@");
+	const hashIndex = repoPath.indexOf("#");
+	const refIndex = [atIndex, hashIndex].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+	return refIndex === undefined ? repoPath : repoPath.slice(0, refIndex);
+}
+
+function parseGitPackagePath(source: string): { host: string; repoPath: string } | undefined {
+	const spec = source.slice(4).trim();
+	if (!spec) return undefined;
+
+	let host = "";
+	let repoPath = "";
+	const scpLike = spec.match(/^git@([^:]+):(.+)$/);
+	if (scpLike) {
+		host = scpLike[1] ?? "";
+		repoPath = scpLike[2] ?? "";
+	} else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(spec)) {
+		try {
+			const url = new URL(spec);
+			host = url.hostname;
+			repoPath = url.pathname.replace(/^\/+/, "");
+		} catch {
+			return undefined;
+		}
+	} else {
+		const slashIndex = spec.indexOf("/");
+		if (slashIndex < 0) return undefined;
+		host = spec.slice(0, slashIndex);
+		repoPath = spec.slice(slashIndex + 1);
+	}
+
+	const normalizedPath = stripGitRef(repoPath).replace(/\.git$/, "").replace(/^\/+/, "");
+	if (!host || !isSafePackagePath(host) || !isSafePackagePath(normalizedPath) || normalizedPath.split(/[\\/]/).length < 2) {
+		return undefined;
+	}
+	return { host, repoPath: normalizedPath };
+}
+
 function resolveSettingsPackageRoot(source: string, baseDir: string): string | undefined {
 	const trimmed = source.trim();
 	if (!trimmed) return undefined;
+	if (trimmed.startsWith("git:")) {
+		const parsed = parseGitPackagePath(trimmed);
+		return parsed ? path.join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
+	}
+	if (trimmed.startsWith("npm:")) {
+		const packageName = parseNpmPackageName(trimmed);
+		return packageName ? path.join(baseDir, "npm", "node_modules", packageName) : undefined;
+	}
 	const normalized = trimmed.startsWith("file:") ? trimmed.slice(5) : trimmed;
 	if (normalized === "~") return os.homedir();
 	if (normalized.startsWith("~/")) return path.join(os.homedir(), normalized.slice(2));
