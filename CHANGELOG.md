@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- Consolidated the `oracle-executor` role into `worker`: `worker` now uses `openai-codex/gpt-5.3-codex` with high thinking and stricter approved-direction guardrails, while `researcher` and `context-builder` now use medium thinking.
+
+### Removed
+- Removed the bundled `oracle-executor` agent and `/oracle-executor` prompt template in favor of using `worker` for approved oracle handoffs.
+
 ## [0.19.3] - 2026-04-27
 
 ### Changed

@@ -16,7 +16,7 @@ agents into a workflow, or create/edit agents and chains on demand.
 ## When to Use
 
 - **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
-- **Implementation handoff**: have `oracle` advise, then `oracle-executor` or `worker` implement only after an approved direction
+- **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
 - **Recon and planning**: use `scout` or `context-builder`, then `planner`
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
 - **Long-running work**: launch async/background runs and inspect them later
@@ -43,7 +43,6 @@ Packaged prompt shortcuts are also available for repeatable workflows:
 - `/parallel-review` — fresh-context reviewers with distinct review angles, then synthesis
 - `/parallel-research` — combine `researcher` and `scout` for external evidence plus local code context
 - `/gather-context-and-clarify` — scout/research first, then ask the user clarifying questions with `interview`
-- `/oracle-executor` — send an explicitly approved implementation task to `oracle-executor`
 
 ## Builtin Agents
 
@@ -54,13 +53,12 @@ and user/project agents override builtins with the same name.
 |-------|---------|-------|------------------------|
 | `scout` | Fast codebase recon | `openai-codex/gpt-5.4-mini` | Writes `context.md` handoff material |
 | `planner` | Creates implementation plans | `openai-codex/gpt-5.5` | Writes `plan.md` |
-| `worker` | General implementation | `openai-codex/gpt-5.5` | Edits code directly |
+| `worker` | Implementation and approved oracle handoffs | `openai-codex/gpt-5.3-codex` | Single-writer implementation with decision escalation |
 | `reviewer` | Review-and-fix specialist | `openai-codex/gpt-5.5` | Can edit/fix reviewed code |
 | `context-builder` | Requirements/codebase handoff builder | `openai-codex/gpt-5.5` | Writes structured context files |
 | `researcher` | Web research brief generator | `openai-codex/gpt-5.5` | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits parent model | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | `openai-codex/gpt-5.5` | Advisory review, intercom coordination |
-| `oracle-executor` | Implementation after approval | `openai-codex/gpt-5.5` | Single-writer implementation after approval |
 
 Override builtin defaults before copying full agent files when a small tweak is enough.
 
@@ -282,7 +280,7 @@ The intended oracle loop is:
 2. `oracle` reviews direction, drift, assumptions, and risks
 3. `oracle` can coordinate back to the orchestrator via `intercom`
 4. the main agent decides what direction to approve
-5. only then should `oracle-executor` implement
+5. only then should `worker` implement
 
 ```typescript
 // Advisory review in a branched thread
@@ -294,7 +292,7 @@ subagent({
 
 // Implementation only after explicit approval
 subagent({
-  agent: "oracle-executor",
+  agent: "worker",
   task: "Implement the approved approach: ...",
   context: "fork"
 })
@@ -426,9 +424,8 @@ copying a full builtin file.
 ## Prompt Template Integration
 
 The package includes prompt shortcuts for common workflows: `/parallel-review`,
-`/parallel-research`, `/gather-context-and-clarify`, and `/oracle-executor`.
-Use them when the user wants repeatable review, research, clarification, or
-approved execution patterns.
+`/parallel-research`, and `/gather-context-and-clarify`. Use them when the user
+wants repeatable review, research, or clarification patterns.
 
 If `pi-prompt-template-model` is installed, additional user prompt templates can delegate into
 `pi-subagents`. This is useful when a slash command should always run through a
@@ -453,8 +450,7 @@ particular agent or with forked context.
 ### Keep writes single-threaded by default
 
 A strong pattern is one main decision-maker plus advisory/research/review
-subagents around it. Use `oracle` for advice and `oracle-executor` or `worker`
-for the actual write path.
+subagents around it. Use `oracle` for advice and `worker` for the actual write path.
 
 ### Use fork for branched advisory or execution threads
 

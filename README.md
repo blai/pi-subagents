@@ -67,7 +67,7 @@ Run parallel reviewers on this diff. I want one focused on correctness, one on t
 ```
 
 ```text
-Implement this plan with oracle-executor. Afterward, run parallel reviewers, summarize their feedback, and apply the fixes that make sense.
+Have worker implement this approved plan. Afterward, run parallel reviewers, summarize their feedback, and apply the fixes that make sense.
 ```
 
 ```text
@@ -85,7 +85,7 @@ Those are ordinary Pi requests. Pi decides whether to call `subagent`, which age
 | Review a diff | “Use reviewer to review this diff.” |
 | Run parallel reviewers | “Run reviewers for correctness, tests, and cleanup.” |
 | Implement then review | “Implement this, then review it.” |
-| Execute a plan carefully | “Use oracle-executor to implement this plan, then run reviewers and apply the feedback.” |
+| Execute a plan carefully | “Have worker implement this approved plan, then run reviewers and apply the feedback.” |
 | Scout before planning | “Use scout to inspect the auth flow before planning.” |
 | Run in the background | “Run this in the background.” |
 | Browse agents | “Show me the available subagents.” |
@@ -102,11 +102,10 @@ The extension ships with builtin agents you can use immediately.
 | `scout` | Fast local codebase recon: relevant files, entry points, data flow, risks, and where another agent should start. |
 | `researcher` | Web/docs research with sources: official docs, specs, benchmarks, recent changes, and a concise research brief. |
 | `planner` | A concrete implementation plan from existing context. It should read and plan, not edit code. |
-| `worker` | General implementation work. It reads context or a plan, edits files, and runs validation when it can. |
+| `worker` | Implementation work, including approved oracle handoffs. It edits files, validates, and escalates unapproved decisions instead of guessing. |
 | `reviewer` | Code review and small fixes. It checks the implementation against the task/plan, tests, edge cases, and simplicity. |
 | `context-builder` | A stronger setup pass before planning: gathers code context and writes handoff material such as `context.md` and `meta-prompt.md`. |
 | `oracle` | A second opinion before acting. It challenges assumptions, catches drift, and recommends the safest next move without editing. |
-| `oracle-executor` | Careful implementation after a direction has been approved. It is the “go do the approved thing” agent. |
 | `delegate` | A lightweight general delegate when you want a child agent that behaves close to the parent session. |
 
 A simple rule of thumb: use `scout` before you understand the code, `researcher` before you trust external facts, `planner` before a bigger change, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
@@ -184,7 +183,6 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/parallel-review` | Launch fresh-context reviewers with distinct angles, then synthesize what to fix. |
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
 | `/gather-context-and-clarify` | Scout/research first, then ask the user the clarification questions that matter. |
-| `/oracle-executor` | Send an explicitly approved implementation task to `oracle-executor` with inherited context. |
 
 ## Optional pi-intercom companion
 
@@ -315,7 +313,7 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-The `oracle` and `oracle-executor` builtins are designed for an explicit decision loop. A typical pattern is to ask `oracle` for diagnosis and a recommended execution prompt, then only run `oracle-executor` after the main agent approves that direction.
+The `oracle` and `worker` builtins are designed for an explicit decision loop. A typical pattern is to ask `oracle` for diagnosis and a recommended execution prompt, then only run `worker` after the main agent approves that direction.
 
 ## Clarify and launch UI
 
@@ -386,7 +384,7 @@ Agent locations, lowest to highest priority:
 
 Project discovery also reads legacy `.agents/{name}.md` files. If both `.agents/` and `.pi/agents/` define the same project agent, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win name collisions.
 
-Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `oracle-executor` is an implementation escalator intended to run only after the main agent approves a course of action.
+Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `worker` is the implementation agent for normal tasks and approved oracle handoffs.
 
 The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`; those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
 

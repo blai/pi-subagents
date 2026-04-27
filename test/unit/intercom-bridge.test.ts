@@ -54,7 +54,7 @@ describe("resolveIntercomSessionTarget", () => {
 describe("resolveSubagentIntercomTarget", () => {
 	it("builds stable child session targets from run metadata", () => {
 		assert.equal(resolveSubagentIntercomTarget("78f659a3", "worker"), "subagent-worker-78f659a3");
-		assert.equal(resolveSubagentIntercomTarget("78f659a3", "oracle executor", 1), "subagent-oracle-executor-78f659a3-2");
+		assert.equal(resolveSubagentIntercomTarget("78f659a3", "senior executor", 1), "subagent-senior-executor-78f659a3-2");
 	});
 });
 
