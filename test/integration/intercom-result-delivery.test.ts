@@ -162,8 +162,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(payload.children?.length, 1);
 		assert.equal(payload.children?.[0]?.agent, "worker");
 		assert.match(payload.children?.[0]?.intercomTarget ?? "", /^subagent-worker-[a-f0-9]+-1$/);
-		assert.match(String(payload.message ?? ""), /For clarification, message a listed subagent at its Intercom target\./);
-		assert.match(String(payload.message ?? ""), /Intercom target: subagent-worker-[a-f0-9]+-1/);
+		assert.match(String(payload.message ?? ""), /Intercom targets below identify child sessions used while they were running/);
+		assert.match(String(payload.message ?? ""), /Run intercom target: subagent-worker-[a-f0-9]+-1/);
 		assert.match(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Full child output from worker/);
 		assert.equal(result.details?.results?.[0]?.finalOutput, undefined);
@@ -176,7 +176,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const result = await executor.execute(
 			"single-no-intercom",
-			{ agent: "worker", task: "Implement feature" },
+			{ agent: "worker", task: "Summarize feature" },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -192,7 +192,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const result = await executor.execute(
 			"single-no-ack",
-			{ agent: "worker", task: "Implement feature" },
+			{ agent: "worker", task: "Summarize feature" },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -220,8 +220,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(payload.mode, "parallel");
 		assert.deepEqual((payload.children ?? []).map((child) => child.agent).sort(), ["a", "b"]);
 		assert.equal((payload.children ?? []).every((child) => /^subagent-[ab]-[a-f0-9]+-[12]$/.test(child.intercomTarget ?? "")), true);
-		assert.match(String(payload.message ?? ""), /For clarification, message a listed subagent at its Intercom target\./);
-		assert.match(String(payload.message ?? ""), /Intercom target: subagent-a-[a-f0-9]+-1/);
+		assert.match(String(payload.message ?? ""), /Intercom targets below identify child sessions used while they were running/);
+		assert.match(String(payload.message ?? ""), /Run intercom target: subagent-a-[a-f0-9]+-1/);
 		assert.match(String(payload.message ?? ""), /1\. a — completed/);
 		assert.match(String(payload.message ?? ""), /2\. b — completed/);
 		assert.match(result.content[0]?.text ?? "", /Delivered parallel subagent results via intercom\./);

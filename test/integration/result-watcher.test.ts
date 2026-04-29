@@ -120,8 +120,8 @@ describe("result watcher", () => {
 			assert.match(message, /Mode: parallel/);
 			assert.match(message, /Status: failed/);
 			assert.match(message, /Children: 1 completed, 1 failed/);
-			assert.match(message, /For clarification, message a listed subagent at its Intercom target\./);
-			assert.match(message, /Intercom target: subagent-a-run-123-1/);
+			assert.match(message, /Intercom targets below identify child sessions used while they were running/);
+			assert.match(message, /Run intercom target: subagent-a-run-123-1/);
 			assert.equal((intercomEvents[0]?.data as { mode?: string; status?: string }).mode, "parallel");
 			assert.equal((intercomEvents[0]?.data as { mode?: string; status?: string }).status, "failed");
 			assert.match(message, /1\. a — completed/);

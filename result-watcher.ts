@@ -45,6 +45,7 @@ export function createResultWatcher(
 				results?: Array<{
 					agent?: string;
 					output?: string;
+					error?: string;
 					success?: boolean;
 					artifactPaths?: { outputPath?: string };
 					intercomTarget?: string;
@@ -83,18 +84,26 @@ export function createResultWatcher(
 					runId,
 					mode,
 					source: "async",
-					children: childResults.map((result = {}, index) => ({
-						agent: result.agent ?? data.agent ?? `step-${index + 1}`,
-						status: resolveSubagentResultStatus({
-							success: result.success,
-							state: data.state === "paused" || typeof result.success !== "boolean" ? data.state : undefined,
-						}),
-						summary: result.output ?? data.summary ?? "(no output)",
-						index,
-						artifactPath: result.artifactPaths?.outputPath,
-						sessionPath: data.sessionFile,
-						intercomTarget: result.intercomTarget,
-					})),
+					children: childResults.map((result = {}, index) => {
+						const baseOutput = result.output ?? data.summary;
+						const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
+						const output = hasRealOutput ? baseOutput : "(no output)";
+						const summary = result.success === false && result.error
+							? `${result.error}${hasRealOutput ? `\n\nOutput:\n${baseOutput}` : ""}`
+							: output;
+						return {
+							agent: result.agent ?? data.agent ?? `step-${index + 1}`,
+							status: resolveSubagentResultStatus({
+								success: result.success,
+								state: data.state === "paused" || typeof result.success !== "boolean" ? data.state : undefined,
+							}),
+							summary,
+							index,
+							artifactPath: result.artifactPaths?.outputPath,
+							sessionPath: data.sessionFile,
+							intercomTarget: result.intercomTarget,
+						};
+					}),
 					asyncId: data.id,
 					asyncDir: data.asyncDir,
 				});

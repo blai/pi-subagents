@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+- Added active-long-running and repeated mutating-tool failure notices so supervised/forked workers cannot burn turns silently while still appearing healthy.
+- Fixed task editor wrapping so wide characters cannot push text past the right border.
+- Mark implementation subagents as failed when they complete without any file mutation attempt.
+- Applied the same no-mutation completion guard to async/background runner paths.
+- Split terminal no-mutation guard notices from live idle notices so completed failures do not suggest status or interrupt commands.
+- Clarified worker/intercom bridge instructions so blocked decisions use `intercom ask` and stay alive for the reply instead of completing with a question.
+- Labeled the Agents widget as async/background work so running detached agents are easier to identify.
+- Reworked parallel progress wording so parallel runs show running/done agent counts (and chain parallel groups show `step X/Y · parallel group` with agent fractions) instead of serial `step X/Y` counters.
+- Expanded `/parallel-cleanup` guidance to flag redundant wrapper tests when one focused regression is enough.
+- Fixed flexible schema validation for `reads` and `skill` overrides so `reads: false`, `skill: "review"`, and `skill: false` no longer trigger `element.reads.every is not a function` (issue #124).
+- Hardened slash-result and async-widget animation timers so stale extension contexts after `/new` or reload stop their timers instead of crashing on `ctx.ui` access (issue #122).
+
 ## [0.20.1] - 2026-04-27
 
 ### Fixed

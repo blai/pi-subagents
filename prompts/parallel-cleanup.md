@@ -2,11 +2,15 @@
 description: Parallel cleanup review
 ---
 
-Launch two fresh-context reviewer subagents for an adversarial cleanup review of the current work. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. Do not rely on this prompt as a substitute for reading the code.
+Run a fresh-context parallel cleanup review of the current work.
+
+Use the `subagent` tool. First inspect available agents/skills if needed, then launch two reviewer subagents in parallel with `context: "fresh"`. Do not use forked context unless I explicitly ask for it. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. They must not rely on the main conversation history.
+
+Do not write reviewer output files into the repository unless I explicitly ask for artifacts. Prefer `output: false` for each reviewer task.
 
 Reviewer 1: deslop pass.
 
-Ask this reviewer to look for AI-slop patterns in the changed scope:
+If the `deslop` skill is available, pass it to this reviewer. If not, inline the guidance below. Ask this reviewer to look for AI-slop patterns in the changed scope:
 - comments that restate code, placeholder text, stale rationale, or debug leftovers;
 - defensive checks that hide useful errors, return vague defaults, or validate trusted internal data after a real boundary was already crossed;
 - type escapes, broad casts, duplicated type definitions, or object-bag typing where a local source-of-truth type exists;
@@ -19,13 +23,14 @@ Tell this reviewer to treat tool output and slop-scan-style findings as leads, n
 
 Reviewer 2: verbosity pass.
 
-Ask this reviewer to look for needless verbosity in code, tests, docs, status text, grouped messages, receipts, and changelog wording:
+If the `verbosity-cleaner` skill is available, pass it to this reviewer. If not, inline the guidance below. Ask this reviewer to look for needless verbosity in code, tests, docs, status text, grouped messages, receipts, and changelog wording:
 - single-use helpers that merely paraphrase an expression;
 - temporary variables that only name obvious expressions;
 - nested returns or branches that can become direct returns without hiding intent;
 - multi-line cleanup scaffolding that can use a local direct pattern while preserving cleanup semantics;
 - repeated boilerplate that can use an existing local fixture or a small local helper;
 - tests that restate formatter details already covered at a cheaper layer;
+- regression tests where one focused assertion would cover the bug but wrapper/API-adjacent tests only repeat the same claim;
 - prose that says the same thing twice, sounds generic, or buries the important rule.
 
 Tell this reviewer that shorter is only better when it is clearer and preserves behavior, error signals, cleanup semantics, useful invariants, and local style.
@@ -38,5 +43,7 @@ While reviewers run, do your own narrow inspection if useful. After they return,
 - feedback to ignore or defer, with a short reason.
 
 Do not blindly apply every reviewer suggestion. Ask before applying fixes unless I already told you to address review feedback.
+
+Additional scope or focus from the slash command invocation:
 
 $@

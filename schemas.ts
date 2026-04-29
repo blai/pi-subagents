@@ -6,7 +6,11 @@ import { Type } from "typebox";
 
 const SkillOverride = Type.Unsafe({
 	type: ["string", "array", "boolean"],
-	items: { type: "string" },
+	anyOf: [
+		{ type: "array", items: { type: "string" } },
+		{ type: "boolean" },
+		{ type: "string" },
+	],
 	description: "Skill name(s) to inject (comma-separated), array of strings, or boolean (false disables, true uses default)",
 });
 
@@ -17,7 +21,10 @@ const OutputOverride = Type.Unsafe({
 
 const ReadsOverride = Type.Unsafe({
 	type: ["array", "boolean"],
-	items: { type: "string" },
+	anyOf: [
+		{ type: "array", items: { type: "string" } },
+		{ type: "boolean" },
+	],
 	description: "Files to read before running (array of filenames), or false to disable",
 });
 
@@ -110,7 +117,7 @@ export const SubagentParams = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
-		description: "Action: 'list', 'get', 'create', 'update', 'delete', 'status', 'interrupt', or 'doctor'. Omit for execution mode."
+		description: "Action: 'list', 'get', 'create', 'update', 'delete', 'status', 'interrupt', or 'doctor' diagnostics. Omit for execution mode."
 	})),
 	id: Type.Optional(Type.String({
 		description: "Run id or prefix for action='status' or action='interrupt'."

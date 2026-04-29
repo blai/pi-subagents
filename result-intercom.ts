@@ -94,14 +94,14 @@ export function formatSubagentResultIntercomMessage(input: {
 	if (input.asyncDir) lines.push(`Async dir: ${input.asyncDir}`);
 	if (input.children.some((child) => child.intercomTarget)) {
 		lines.push("");
-		lines.push("For clarification, message a listed subagent at its Intercom target.");
+		lines.push("Intercom targets below identify child sessions used while they were running; completed child sessions may no longer be reachable. Inspect artifacts or session logs for follow-up.");
 	}
 
 	for (let index = 0; index < input.children.length; index++) {
 		const child = input.children[index]!;
 		lines.push("");
 		lines.push(`${index + 1}. ${child.agent} — ${child.status}`);
-		if (child.intercomTarget) lines.push(`Intercom target: ${child.intercomTarget}`);
+		if (child.intercomTarget) lines.push(`Run intercom target: ${child.intercomTarget}`);
 		if (child.artifactPath) lines.push(`Output artifact: ${child.artifactPath}`);
 		if (child.sessionPath) lines.push(`Session: ${child.sessionPath}`);
 		lines.push("Summary:");
@@ -216,7 +216,7 @@ export function formatSubagentResultReceipt(input: {
 
 	const intercomTargets = input.payload.children.filter((child) => typeof child.intercomTarget === "string");
 	if (intercomTargets.length > 0) {
-		lines.push("Intercom targets:");
+		lines.push("Run intercom targets (may be inactive after completion):");
 		for (const child of intercomTargets) {
 			lines.push(`- ${child.agent} [${child.status}]: ${child.intercomTarget}`);
 		}

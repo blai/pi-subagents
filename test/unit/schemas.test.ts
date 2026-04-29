@@ -43,6 +43,10 @@ interface SubagentParamsSchema {
 		control?: {
 			properties?: {
 				needsAttentionAfterMs?: { minimum?: number };
+				activeNoticeAfterMs?: { minimum?: number };
+				activeNoticeAfterTurns?: { minimum?: number };
+				activeNoticeAfterTokens?: { minimum?: number };
+				failedToolAttemptsBeforeAttention?: { minimum?: number };
 				notifyOn?: { items?: { enum?: string[] } };
 				notifyChannels?: { items?: { enum?: string[] } };
 			};
@@ -58,21 +62,49 @@ interface SubagentParamsSchema {
 	};
 }
 
+function missingPackageName(error: unknown): string | undefined {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.match(/Cannot find package ['"]([^'"]+)['"]/i)?.[1];
+}
+
+function anyOfBranches(schema: JsonSchemaNode | undefined): JsonSchemaNode[] {
+	const anyOf = schema?.anyOf;
+	if (!Array.isArray(anyOf)) return [];
+	return anyOf.filter((branch): branch is JsonSchemaNode => !!branch && typeof branch === "object");
+}
+
+function hasAnyOfType(schema: JsonSchemaNode | undefined, type: string): boolean {
+	return anyOfBranches(schema).some((branch) => branch.type === type);
+}
+
+function hasAnyOfArrayWithStringItems(schema: JsonSchemaNode | undefined): boolean {
+	return anyOfBranches(schema).some((branch) => {
+		if (branch.type !== "array") return false;
+		const items = branch.items;
+		return !!items && typeof items === "object" && (items as JsonSchemaNode).type === "string";
+	});
+}
+
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
-let CompileSchema: ((schema: unknown) => { Check(value: unknown): boolean; Errors(value: unknown): Iterable<{ message: string }> }) | undefined;
-let available = true;
+let schemasAvailable = true;
 try {
 	schemas = await import("../../schemas.ts") as Record<string, JsonSchemaNode>;
 	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+} catch (error) {
+	if (missingPackageName(error) !== "typebox") throw error;
+	schemasAvailable = false;
+}
+let CompileSchema: ((schema: unknown) => { Check(value: unknown): boolean; Errors(value: unknown): Iterable<{ message: string }> }) | undefined;
+try {
 	const compileModule = await import("typebox/compile") as { Compile: typeof CompileSchema };
 	CompileSchema = compileModule.Compile;
-} catch {
-	// Skip in environments that do not install typebox.
-	available = false;
+} catch (error) {
+	if (missingPackageName(error) !== "typebox") throw error;
+	// The structural schema assertions below do not need the optional compiler package.
 }
 
-describe("SubagentParams schema", { skip: !available ? "typebox not available" : undefined }, () => {
+describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
 	it("includes context field for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");
@@ -89,8 +121,10 @@ describe("SubagentParams schema", { skip: !available ? "typebox not available" :
 		assert.equal(taskCountSchema.minimum, 1);
 		assert.match(String(taskCountSchema.description ?? ""), /repeat/i);
 		assert.deepEqual(taskSchema?.output?.type, ["string", "boolean"]);
-		assert.deepEqual(taskSchema?.reads?.type, ["array", "boolean"]);
-		assert.deepEqual(taskSchema?.reads?.items, { type: "string" });
+		const readsSchema = taskSchema?.reads as JsonSchemaNode | undefined;
+		assert.deepEqual(readsSchema?.type, ["array", "boolean"]);
+		assert.equal(hasAnyOfArrayWithStringItems(readsSchema), true);
+		assert.equal(hasAnyOfType(readsSchema, "boolean"), true);
 		assert.equal(taskSchema?.progress?.type, "boolean");
 
 		const concurrencySchema = SubagentParams?.properties?.concurrency;
@@ -127,7 +161,11 @@ describe("SubagentParams schema", { skip: !available ? "typebox not available" :
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");
 		assert.equal(controlSchema.properties?.needsAttentionAfterMs?.minimum, 1);
-		assert.deepEqual(controlSchema.properties?.notifyOn?.items?.enum, ["needs_attention"]);
+		assert.equal(controlSchema.properties?.activeNoticeAfterMs?.minimum, 1);
+		assert.equal(controlSchema.properties?.activeNoticeAfterTurns?.minimum, 1);
+		assert.equal(controlSchema.properties?.activeNoticeAfterTokens?.minimum, 1);
+		assert.equal(controlSchema.properties?.failedToolAttemptsBeforeAttention?.minimum, 1);
+		assert.deepEqual(controlSchema.properties?.notifyOn?.items?.enum, ["active_long_running", "needs_attention"]);
 		assert.deepEqual(controlSchema.properties?.notifyChannels?.items?.enum, ["event", "async", "intercom"]);
 	});
 
@@ -170,7 +208,7 @@ describe("SubagentParams schema", { skip: !available ? "typebox not available" :
 
 				const node = current.value as JsonSchemaNode;
 				const types = Array.isArray(node.type) ? node.type : [node.type];
-				if (types.includes("array") && !Object.hasOwn(node, "items")) {
+				if (types.includes("array") && !Object.hasOwn(node, "items") && !hasAnyOfArrayWithStringItems(node)) {
 					missingItemsPaths.push(current.path);
 				}
 
@@ -192,7 +230,9 @@ describe("SubagentParams schema", { skip: !available ? "typebox not available" :
 		const skillSchema = SubagentParams?.properties?.skill;
 		assert.ok(skillSchema, "skill schema should exist");
 		assert.deepEqual(skillSchema.type, ["string", "array", "boolean"]);
-		assert.deepEqual(skillSchema.items, { type: "string" });
+		assert.equal(hasAnyOfArrayWithStringItems(skillSchema), true);
+		assert.equal(hasAnyOfType(skillSchema, "boolean"), true);
+		assert.equal(hasAnyOfType(skillSchema, "string"), true);
 
 		const outputSchema = SubagentParams?.properties?.output;
 		assert.ok(outputSchema, "output schema should exist");
@@ -212,21 +252,26 @@ describe("SubagentParams schema", { skip: !available ? "typebox not available" :
 		assert.equal(chainItem.properties?.parallel?.type, "array");
 		assert.equal((chainItem.properties?.parallel?.items as { properties?: Record<string, JsonSchemaNode> } | undefined)?.properties?.agent?.type, "string");
 		assert.deepEqual(chainItem.properties?.output?.type, ["string", "boolean"]);
-		assert.deepEqual(chainItem.properties?.reads?.type, ["array", "boolean"]);
-		assert.deepEqual(chainItem.properties?.reads?.items, { type: "string" });
+		const chainReadsSchema = chainItem.properties?.reads as JsonSchemaNode | undefined;
+		assert.deepEqual(chainReadsSchema?.type, ["array", "boolean"]);
+		assert.equal(hasAnyOfArrayWithStringItems(chainReadsSchema), true);
+		assert.equal(hasAnyOfType(chainReadsSchema, "boolean"), true);
 	});
 
-	it("validates representative flexible field values with TypeBox compiler", () => {
+	it("validates representative flexible field values with TypeBox compiler", { skip: !CompileSchema ? "typebox compiler not available" : undefined }, () => {
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
 		const validValues = [
 			{ skill: "review" },
 			{ skill: false },
+			{ tasks: [{ agent: "reviewer", task: "check this", reads: false }] },
 			{ tasks: [{ agent: "reviewer", task: "check this", skill: "review" }] },
 			{ tasks: [{ agent: "reviewer", task: "check this", skill: false }] },
 			{ tasks: [{ agent: "reviewer", task: "check this", output: "review.md", reads: ["input.md"], progress: true }] },
 			{ chain: [{ agent: "reviewer", reads: false }] },
+			{ chain: [{ agent: "reviewer", skill: "review" }] },
+			{ chain: [{ agent: "reviewer", skill: false }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", reads: false, skill: false }] }] },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
