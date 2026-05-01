@@ -479,6 +479,51 @@ describe("saved chain slash command", { skip: !available ? "slash-commands.ts no
 		clearSlashSnapshots?.();
 	});
 
+	it("/run and /chain accept dotted packaged runtime agent names", async () => {
+		await withTempProject("pi-packaged-agent-slash-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "code-analysis.scout.md"), `---
+name: scout
+package: code-analysis
+description: Fast recon
+---
+
+Inspect
+`, "utf-8");
+			fs.writeFileSync(path.join(root, ".pi", "agents", "documentation.writer.md"), `---
+name: writer
+package: documentation
+description: Writer
+---
+
+Write
+`, "utf-8");
+
+			const run = await captureSlashCommandParams("run", "code-analysis.scout Investigate", root);
+			assert.deepEqual(run.params, { agent: "code-analysis.scout", task: "Investigate", clarify: false, agentScope: "both" });
+
+			const chain = await captureSlashCommandParams("chain", "code-analysis.scout \"Scan\" -> documentation.writer", root);
+			assert.deepEqual((chain.params as { chain?: Array<{ agent?: string; task?: string }> }).chain?.map(({ agent, task }) => ({ agent, task })), [
+				{ agent: "code-analysis.scout", task: "Scan" },
+				{ agent: "documentation.writer", task: undefined },
+			]);
+
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(_message: unknown) {},
+				};
+				registerSlashCommands!(pi, createState(root));
+				const runCompletions = commands.get("run")!.getArgumentCompletions!("code-") as Array<{ value: string; label: string }>;
+				assert.deepEqual(runCompletions.map((completion) => completion.value), ["code-analysis.scout"]);
+				const chainCompletions = commands.get("chain")!.getArgumentCompletions!("code-analysis.scout \"Scan\" -> doc") as Array<{ value: string; label: string }>;
+				assert.deepEqual(chainCompletions.map((completion) => completion.value), ["code-analysis.scout \"Scan\" -> documentation.writer"]);
+			});
+		});
+	});
+
 	it("/run-chain launches a saved chain with a shared task", async () => {
 		await withTempProject("pi-run-chain-success-", async (root) => {
 			writeProjectChain(root, "review-flow.chain.md", `---
@@ -514,6 +559,40 @@ Review {previous}
 			assert.equal(runParams.agentScope, "both");
 			assert.equal(runParams.async, undefined);
 			assert.equal(runParams.context, undefined);
+		});
+	});
+
+	it("/run-chain launches and completes packaged saved chains by dotted runtime name", async () => {
+		await withTempProject("pi-run-chain-packaged-", async (root) => {
+			writeProjectChain(root, "code-analysis.review-flow.chain.md", `---
+name: review-flow
+package: code-analysis
+description: Review flow
+---
+
+## code-analysis.scout
+
+Scan {task}
+`);
+
+			const { params } = await captureSlashCommandParams("run-chain", "code-analysis.review-flow -- Audit", root);
+			assert.equal((params as { task?: string }).task, "Audit");
+			assert.deepEqual((params as { chain?: Array<{ agent?: string; task?: string }> }).chain?.map(({ agent, task }) => ({ agent, task })), [
+				{ agent: "code-analysis.scout", task: "Scan {task}" },
+			]);
+
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(_message: unknown) {},
+				};
+				registerSlashCommands!(pi, createState(root));
+				const completions = commands.get("run-chain")!.getArgumentCompletions!("code-") as Array<{ value: string; label: string }>;
+				assert.deepEqual(completions.map((completion) => completion.value), ["code-analysis.review-flow"]);
+			});
 		});
 	});
 

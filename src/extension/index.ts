@@ -408,11 +408,11 @@ Example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {agent:"agent-b", t
 
 MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "list" } - discover executable agents/chains
-• { action: "get", agent: "name" } - full detail
-• { action: "create", config: { name, systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, ... } }
-• { action: "update", agent: "name", config: { ... } } - merge
-• { action: "delete", agent: "name" }
-• Use chainName for chain operations
+• { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
+• { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, ... } }
+• { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
+• { action: "delete", agent: "code-analysis.custom-agent" }
+• Use chainName for chain operations; packaged chains also use dotted runtime names
 
 CONTROL:
 • { action: "status", id: "..." } - inspect an async/background run by id or prefix

@@ -11,6 +11,8 @@ import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
+import { buildRuntimeName, parsePackageName } from "./identity.ts";
+export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -67,6 +69,8 @@ interface BuiltinAgentOverrideInfo {
 
 export interface AgentConfig {
 	name: string;
+	localName?: string;
+	packageName?: string;
 	description: string;
 	tools?: string[];
 	mcpDirectTools?: string[];
@@ -112,6 +116,8 @@ export interface ChainStepConfig {
 
 export interface ChainConfig {
 	name: string;
+	localName?: string;
+	packageName?: string;
 	description: string;
 	source: AgentSource;
 	filePath: string;
@@ -507,26 +513,34 @@ export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "us
 	return filePath;
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
-	const agents: AgentConfig[] = [];
-
-	if (!fs.existsSync(dir)) {
-		return agents;
-	}
+function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) => boolean): string[] {
+	const files: string[] = [];
+	if (!fs.existsSync(dir)) return files;
 
 	let entries: fs.Dirent[];
 	try {
-		entries = fs.readdirSync(dir, { withFileTypes: true });
+		entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
 	} catch {
-		return agents;
+		return files;
 	}
 
 	for (const entry of entries) {
-		if (!entry.name.endsWith(".md")) continue;
-		if (entry.name.endsWith(".chain.md")) continue;
-		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-
 		const filePath = path.join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...listMarkdownFilesRecursive(filePath, predicate));
+			continue;
+		}
+		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+		if (!predicate(entry.name)) continue;
+		files.push(filePath);
+	}
+	return files;
+}
+
+function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+	const agents: AgentConfig[] = [];
+
+	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");
@@ -539,6 +553,12 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		if (!frontmatter.name || !frontmatter.description) {
 			continue;
 		}
+
+		const localName = frontmatter.name;
+		const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
+		if (parsedPackage.error) continue;
+		const packageName = parsedPackage.packageName;
+		const runtimeName = buildRuntimeName(localName, packageName);
 
 		const rawTools = frontmatter.tools
 			?.split(",")
@@ -575,12 +595,12 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			? "replace"
 			: frontmatter.systemPromptMode === "append"
 				? "append"
-				: defaultSystemPromptMode(frontmatter.name);
+				: defaultSystemPromptMode(localName);
 		const inheritProjectContext = frontmatter.inheritProjectContext === "true"
 			? true
 			: frontmatter.inheritProjectContext === "false"
 				? false
-				: defaultInheritProjectContext(frontmatter.name);
+				: defaultInheritProjectContext(localName);
 		const inheritSkills = frontmatter.inheritSkills === "true"
 			? true
 			: frontmatter.inheritSkills === "false"
@@ -608,7 +628,9 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
 
 		agents.push({
-			name: frontmatter.name,
+			name: runtimeName,
+			localName,
+			packageName,
 			description: frontmatter.description,
 			tools: tools.length > 0 ? tools : undefined,
 			mcpDirectTools: mcpDirectTools.length > 0 ? mcpDirectTools : undefined,
@@ -642,22 +664,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 function loadChainsFromDir(dir: string, source: AgentSource): ChainConfig[] {
 	const chains: ChainConfig[] = [];
 
-	if (!fs.existsSync(dir)) {
-		return chains;
-	}
-
-	let entries: fs.Dirent[];
-	try {
-		entries = fs.readdirSync(dir, { withFileTypes: true });
-	} catch {
-		return chains;
-	}
-
-	for (const entry of entries) {
-		if (!entry.name.endsWith(".chain.md")) continue;
-		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-
-		const filePath = path.join(dir, entry.name);
+	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".chain.md"))) {
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");

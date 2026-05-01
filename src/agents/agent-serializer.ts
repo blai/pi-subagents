@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import type { AgentConfig } from "./agents.ts";
+import { frontmatterNameForConfig } from "./identity.ts";
 
 export const KNOWN_FIELDS = new Set([
 	"name",
+	"package",
 	"description",
 	"tools",
 	"model",
@@ -30,7 +32,8 @@ function joinComma(values: string[] | undefined): string | undefined {
 export function serializeAgent(config: AgentConfig): string {
 	const lines: string[] = [];
 	lines.push("---");
-	lines.push(`name: ${config.name}`);
+	lines.push(`name: ${frontmatterNameForConfig(config)}`);
+	if (config.packageName) lines.push(`package: ${config.packageName}`);
 	lines.push(`description: ${config.description}`);
 
 	const tools = [

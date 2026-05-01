@@ -100,6 +100,83 @@ describe("agent manager", () => {
 		assert.match(component.render(84).join("\n"), /Select Template/);
 	});
 
+	it("saves packaged agents without rewriting local frontmatter name to runtime name", () => {
+		const root = createTempRoot("pi-agent-manager-packaged-save-");
+		const agentsDir = path.join(root, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		const filePath = path.join(agentsDir, "code-analysis.scout.md");
+		fs.writeFileSync(filePath, `---
+name: scout
+package: code-analysis
+description: Scout
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
+---
+
+Hello
+`, "utf-8");
+
+		const component = new AgentManagerComponent(
+			{ requestRender() {} } as { requestRender(): void },
+			theme(),
+			{ ...discoverAgentsAll(root), cwd: root },
+			[],
+			[],
+			() => {},
+		);
+
+		const entry = component["agents"].find((candidate) => candidate.config.name === "code-analysis.scout");
+		assert.ok(entry);
+		component["enterEdit"](entry);
+
+		assert.equal(component["saveEdit"](), true);
+		const content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^name: scout$/m);
+		assert.match(content, /^package: code-analysis$/m);
+		assert.doesNotMatch(content, /^name: code-analysis\.scout$/m);
+	});
+
+	it("rejects saving an agent over a nested packaged runtime name", () => {
+		const root = createTempRoot("pi-agent-manager-runtime-collision-");
+		const agentsDir = path.join(root, ".pi", "agents");
+		fs.mkdirSync(path.join(agentsDir, "nested"), { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "nested", "scout.md"), `---
+name: scout
+package: code-analysis
+description: Scout
+---
+
+Hello
+`, "utf-8");
+		fs.writeFileSync(path.join(agentsDir, "other.md"), `---
+name: other
+description: Other
+---
+
+Hello
+`, "utf-8");
+
+		const component = new AgentManagerComponent(
+			{ requestRender() {} } as { requestRender(): void },
+			theme(),
+			{ ...discoverAgentsAll(root), cwd: root },
+			[],
+			[],
+			() => {},
+		);
+
+		const entry = component["agents"].find((candidate) => candidate.config.name === "other");
+		assert.ok(entry);
+		component["enterEdit"](entry);
+		component["editState"].draft.localName = "scout";
+		component["editState"].draft.packageName = "code-analysis";
+		component["editState"].draft.name = "code-analysis.scout";
+
+		assert.equal(component["saveEdit"](), false);
+		assert.match(component["editState"].error ?? "", /code-analysis\.scout/);
+	});
+
 	it("renames the backing file when saving an existing renamed agent", () => {
 		const root = createTempRoot("pi-agent-manager-rename-");
 		const agentsDir = path.join(root, ".pi", "agents");

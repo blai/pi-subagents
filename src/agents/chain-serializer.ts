@@ -1,4 +1,5 @@
 import type { ChainConfig, ChainStepConfig } from "./agents.ts";
+import { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 
 function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
@@ -79,14 +80,20 @@ export function parseChain(content: string, source: "user" | "project", filePath
 		steps.push(parseStepBody(agent, sectionBody));
 	}
 
+	const localName = frontmatter.name;
+	const parsedPackage = parsePackageName(frontmatter.package, `Chain '${localName}' package`);
+	if (parsedPackage.error) throw new Error(parsedPackage.error);
+	const packageName = parsedPackage.packageName;
 	const extraFields: Record<string, string> = {};
 	for (const [key, value] of Object.entries(frontmatter)) {
-		if (key === "name" || key === "description") continue;
+		if (key === "name" || key === "package" || key === "description") continue;
 		extraFields[key] = value;
 	}
 
 	return {
-		name: frontmatter.name,
+		name: buildRuntimeName(localName, packageName),
+		localName,
+		packageName,
 		description: frontmatter.description,
 		source,
 		filePath,
@@ -98,7 +105,8 @@ export function parseChain(content: string, source: "user" | "project", filePath
 export function serializeChain(config: ChainConfig): string {
 	const lines: string[] = [];
 	lines.push("---");
-	lines.push(`name: ${config.name}`);
+	lines.push(`name: ${frontmatterNameForConfig(config)}`);
+	if (config.packageName) lines.push(`package: ${config.packageName}`);
 	lines.push(`description: ${config.description}`);
 	if (config.extraFields) {
 		for (const [key, value] of Object.entries(config.extraFields)) {

@@ -178,16 +178,18 @@ agent with the same name only when you want a substantially different agent.
 ## Discovery and Scope Rules
 
 Agent files can live in:
-- `~/.pi/agent/agents/*.md` — user scope
-- `.pi/agents/*.md` — canonical project scope
-- legacy `.agents/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
+- `~/.pi/agent/agents/**/*.md` — user scope
+- `.pi/agents/**/*.md` — canonical project scope
+- legacy `.agents/**/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
 
 Chains live in:
-- `~/.pi/agent/agents/*.chain.md`
-- `.pi/agents/*.chain.md`
-- legacy `.agents/*.chain.md`
+- `~/.pi/agent/agents/**/*.chain.md`
+- `.pi/agents/**/*.chain.md`
+- legacy `.agents/**/*.chain.md`
 
-Precedence is:
+Discovery is recursive. `.chain.md` files are chains, not agents. Agents and chains can set optional frontmatter `package: code-analysis`; `name: scout` plus `package: code-analysis` registers as runtime name `code-analysis.scout` while serialization keeps `name` and `package` separate.
+
+Precedence is by parsed runtime name:
 1. project scope
 2. user scope
 3. builtin agents
@@ -453,6 +455,7 @@ subagent({
   action: "create",
   config: {
     name: "my-agent",
+    package: "code-analysis",
     description: "Project-specific implementation helper",
     systemPrompt: "Your system prompt here.",
     systemPromptMode: "replace",
@@ -467,7 +470,7 @@ subagent({
 ```typescript
 subagent({
   action: "update",
-  agent: "my-agent",
+  agent: "code-analysis.my-agent",
   config: {
     thinking: "high"
   }
@@ -477,13 +480,13 @@ subagent({
 ### Delete an agent
 
 ```typescript
-subagent({ action: "delete", agent: "my-agent" })
+subagent({ action: "delete", agent: "code-analysis.my-agent" })
 ```
 
 Use management actions when the system needs to create or edit subagents on
 demand without dropping into raw file editing.
 
-Management actions create or update user/project agent files. For small builtin changes such as a model swap, prefer `/agents` builtin overrides or `subagents.agentOverrides` in settings.
+Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and chain steps. For small builtin changes such as a model swap, prefer `/agents` builtin overrides or `subagents.agentOverrides` in settings.
 
 ## Creating and Editing Agents by File
 
@@ -492,6 +495,7 @@ A minimal agent file looks like this:
 ```markdown
 ---
 name: my-agent
+package: code-analysis
 description: What this agent does
 model: openai-codex/gpt-5.4
 thinking: high
@@ -504,7 +508,7 @@ inheritSkills: false
 Your system prompt here.
 ```
 
-That is only a starting point. Common optional fields include:
+That is only a starting point. Omit `package` for the traditional unqualified runtime name. Common optional fields include:
 - `defaultProgress`
 - `defaultReads`
 - `output`

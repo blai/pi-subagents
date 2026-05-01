@@ -61,6 +61,10 @@ function buildDetailLines(
 	const defaultContext = agent.defaultContext ?? "auto";
 	const maxSubagentDepth = agent.maxSubagentDepth !== undefined ? String(agent.maxSubagentDepth) : "(default)";
 
+	if (agent.packageName) {
+		lines.push(renderFieldLine("Local name:", agent.localName ?? agent.name, contentWidth, theme));
+		lines.push(renderFieldLine("Package:", agent.packageName, contentWidth, theme));
+	}
 	lines.push(renderFieldLine("Model:", agent.model ?? "default", contentWidth, theme));
 	lines.push(renderFieldLine("Prompt mode:", agent.systemPromptMode, contentWidth, theme));
 	lines.push(renderFieldLine("Project ctx:", agent.inheritProjectContext ? "on" : "off", contentWidth, theme));

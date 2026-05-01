@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
+import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
 import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
 
 const tempDirs: string[] = [];
@@ -284,6 +285,201 @@ Do work
 		assert.equal(delegate?.systemPromptMode, "append");
 		assert.equal(delegate?.inheritProjectContext, true);
 		assert.equal(delegate?.inheritSkills, false);
+	});
+});
+
+describe("packaged agent and chain discovery", () => {
+	it("recursively discovers nested project agents while keeping chain files separate", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-recursive-agent-discovery-"));
+		tempDirs.push(dir);
+		const nestedDir = path.join(dir, ".pi", "agents", "code-analysis", "deep");
+		fs.mkdirSync(nestedDir, { recursive: true });
+		fs.writeFileSync(path.join(nestedDir, "scout.md"), `---
+name: scout
+description: Nested scout
+---
+
+Inspect code
+`, "utf-8");
+		fs.writeFileSync(path.join(nestedDir, "review.chain.md"), `---
+name: review-flow
+description: Review flow
+---
+
+## scout
+
+Review
+`, "utf-8");
+
+		const result = discoverAgentsAll(dir);
+		assert.ok(result.project.find((agent) => agent.name === "scout" && agent.filePath === path.join(nestedDir, "scout.md")));
+		assert.ok(result.chains.find((chain) => chain.name === "review-flow" && chain.filePath === path.join(nestedDir, "review.chain.md")));
+		assert.equal(result.project.some((agent) => agent.filePath.endsWith("review.chain.md")), false);
+	});
+
+	it("registers packaged agents by runtime name and serializes local name plus package", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-agent-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "scout.md"), `---
+name: scout
+package: code-analysis
+description: Fast recon
+---
+
+Inspect code
+`, "utf-8");
+
+		const scout = discoverAgents(dir, "project").agents.find((agent) => agent.name === "code-analysis.scout");
+		assert.ok(scout);
+		assert.equal(scout.localName, "scout");
+		assert.equal(scout.packageName, "code-analysis");
+		const serialized = serializeAgent(scout);
+		assert.match(serialized, /^name: scout$/m);
+		assert.match(serialized, /^package: code-analysis$/m);
+		assert.doesNotMatch(serialized, /^name: code-analysis\.scout$/m);
+	});
+
+	it("recursively discovers packaged chains by runtime name and preserves package on serialize", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-chain-"));
+		tempDirs.push(dir);
+		const nestedDir = path.join(dir, ".pi", "agents", "flows");
+		fs.mkdirSync(nestedDir, { recursive: true });
+		const content = `---
+name: review-flow
+package: code-analysis
+description: Review flow
+---
+
+## code-analysis.scout
+
+Inspect {task}
+`;
+		fs.writeFileSync(path.join(nestedDir, "review.chain.md"), content, "utf-8");
+
+		const chain = discoverAgentsAll(dir).chains.find((candidate) => candidate.name === "code-analysis.review-flow");
+		assert.ok(chain);
+		assert.equal(chain.localName, "review-flow");
+		assert.equal(chain.packageName, "code-analysis");
+		assert.equal(chain.steps[0]?.agent, "code-analysis.scout");
+		const serialized = serializeChain(chain);
+		assert.match(serialized, /^name: review-flow$/m);
+		assert.match(serialized, /^package: code-analysis$/m);
+		assert.match(serialized, /^## code-analysis\.scout$/m);
+		assert.doesNotMatch(serialized, /^name: code-analysis\.review-flow$/m);
+	});
+
+	it("keeps packaged and un-packaged runtime names distinct while preserving un-packaged precedence", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-collisions-"));
+		tempDirs.push(dir);
+		fs.mkdirSync(path.join(dir, ".agents"), { recursive: true });
+		fs.mkdirSync(path.join(dir, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(dir, ".agents", "scout.md"), `---
+name: scout
+description: Legacy scout
+---
+
+Legacy
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Project scout
+---
+
+Project
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".pi", "agents", "packaged.md"), `---
+name: scout
+package: code-analysis
+description: Packaged scout
+---
+
+Packaged
+`, "utf-8");
+
+		const agents = discoverAgents(dir, "project").agents;
+		const unqualified = agents.find((agent) => agent.name === "scout");
+		const packaged = agents.find((agent) => agent.name === "code-analysis.scout");
+		assert.equal(unqualified?.description, "Project scout");
+		assert.equal(unqualified?.filePath, path.join(dir, ".pi", "agents", "scout.md"));
+		assert.equal(packaged?.description, "Packaged scout");
+	});
+
+	it("parses packaged chains directly from serializer helpers", () => {
+		const parsed = parseChain(`---
+name: review-flow
+package: code-analysis
+description: Review flow
+---
+
+## code-analysis.scout
+
+Inspect
+`, "project", "/tmp/review.chain.md");
+
+		assert.equal(parsed.name, "code-analysis.review-flow");
+		assert.equal(parsed.localName, "review-flow");
+		assert.equal(parsed.packageName, "code-analysis");
+		assert.match(serializeChain(parsed), /^name: review-flow$/m);
+	});
+
+	it("normalizes package frontmatter consistently for agents and chains", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-normalize-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "scout.md"), `---
+name: scout
+package: Code Analysis!
+description: Fast recon
+---
+
+Inspect
+`, "utf-8");
+		fs.writeFileSync(path.join(agentsDir, "review.chain.md"), `---
+name: review-flow
+package: Code Analysis!
+description: Review flow
+---
+
+## code-analysis.scout
+
+Review
+`, "utf-8");
+
+		const result = discoverAgentsAll(dir);
+		assert.ok(result.project.find((agent) => agent.name === "code-analysis.scout"));
+		assert.ok(result.chains.find((chain) => chain.name === "code-analysis.review-flow"));
+	});
+
+	it("skips invalid package frontmatter that cannot be normalized", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-package-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "scout.md"), `---
+name: scout
+package: !!!
+description: Fast recon
+---
+
+Inspect
+`, "utf-8");
+		fs.writeFileSync(path.join(agentsDir, "review.chain.md"), `---
+name: review-flow
+package: !!!
+description: Review flow
+---
+
+## scout
+
+Review
+`, "utf-8");
+
+		const result = discoverAgentsAll(dir);
+		assert.equal(result.project.some((agent) => agent.filePath.endsWith("scout.md")), false);
+		assert.equal(result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")), false);
 	});
 });
 

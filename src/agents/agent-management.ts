@@ -12,6 +12,9 @@ import {
 	defaultInheritSkills,
 	defaultSystemPromptMode,
 	discoverAgentsAll,
+	buildRuntimeName,
+	frontmatterNameForConfig,
+	parsePackageName,
 } from "./agents.ts";
 import { serializeAgent } from "./agent-serializer.ts";
 import { serializeChain } from "./chain-serializer.ts";
@@ -69,6 +72,10 @@ function normalizeListScope(scope: unknown): AgentScope | undefined {
 
 function sanitizeName(name: string): string {
 	return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function parsePackageConfig(value: unknown): { packageName?: string; error?: string } {
+	return parsePackageName(value, "config.package");
 }
 
 function allAgents(d: { builtin: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
@@ -340,6 +347,10 @@ function renamePath(
 function formatAgentDetail(agent: AgentConfig): string {
 	const tools = [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
 	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
+	if (agent.packageName) {
+		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
+		lines.push(`Package: ${agent.packageName}`);
+	}
 	if (agent.model) lines.push(`Model: ${agent.model}`);
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
@@ -360,7 +371,12 @@ function formatAgentDetail(agent: AgentConfig): string {
 }
 
 function formatChainDetail(chain: ChainConfig): string {
-	const lines: string[] = [`Chain: ${chain.name} (${chain.source})`, `Path: ${chain.filePath}`, `Description: ${chain.description}`, "", "Steps:"];
+	const lines: string[] = [`Chain: ${chain.name} (${chain.source})`, `Path: ${chain.filePath}`, `Description: ${chain.description}`];
+	if (chain.packageName) {
+		lines.push(`Local name: ${frontmatterNameForConfig(chain)}`);
+		lines.push(`Package: ${chain.packageName}`);
+	}
+	lines.push("", "Steps:");
 	for (let i = 0; i < chain.steps.length; i++) {
 		const s = chain.steps[i]!;
 		lines.push(`${i + 1}. ${s.agent}`);
@@ -435,6 +451,9 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (typeof cfg.description !== "string" || !cfg.description.trim()) return result("config.description is required and must be a non-empty string.", true);
 	const name = sanitizeName(cfg.name);
 	if (!name) return result("config.name is invalid after sanitization. Use letters, numbers, spaces, or hyphens.", true);
+	const parsedPackage = parsePackageConfig(cfg.package);
+	if (parsedPackage.error) return result(parsedPackage.error, true);
+	const runtimeName = buildRuntimeName(name, parsedPackage.packageName);
 	const scopeRaw = cfg.scope ?? "user";
 	if (scopeRaw !== "user" && scopeRaw !== "project") return result("config.scope must be 'user' or 'project'.", true);
 	const scope = scopeRaw as ManagementScope;
@@ -442,23 +461,25 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const d = discoverAgentsAll(ctx.cwd);
 	const targetDir = scope === "user" ? d.userDir : d.projectDir ?? path.join(ctx.cwd, ".pi", "agents");
 	fs.mkdirSync(targetDir, { recursive: true });
-	if (nameExistsInScope(ctx.cwd, scope, name)) return result(`Name '${name}' already exists in ${scope} scope. Use update instead.`, true);
-	const targetPath = path.join(targetDir, isChain ? `${name}.chain.md` : `${name}.md`);
+	if (nameExistsInScope(ctx.cwd, scope, runtimeName)) return result(`Name '${runtimeName}' already exists in ${scope} scope. Use update instead.`, true);
+	const targetPath = path.join(targetDir, isChain ? `${runtimeName}.chain.md` : `${runtimeName}.md`);
 	if (fs.existsSync(targetPath)) return result(`File already exists at ${targetPath} but is not a valid ${isChain ? "chain" : "agent"} definition. Remove or rename it first.`, true);
 	const warnings: string[] = [];
-	if (!isChain && d.builtin.some((a) => a.name === name)) warnings.push(`Note: this shadows the builtin agent '${name}'.`);
+	if (!isChain && d.builtin.some((a) => a.name === runtimeName)) warnings.push(`Note: this shadows the builtin agent '${runtimeName}'.`);
 	if (isChain) {
 		const parsed = parseStepList(cfg.steps);
 		if (parsed.error) return result(parsed.error, true);
-		const chain: ChainConfig = { name, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: parsed.steps! };
+		const chain: ChainConfig = { name: runtimeName, localName: name, packageName: parsedPackage.packageName, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: parsed.steps! };
 		fs.writeFileSync(targetPath, serializeChain(chain), "utf-8");
 		const missing = unknownChainAgents(ctx.cwd, chain.steps);
 		if (missing.length) warnings.push(`Warning: chain steps reference unknown agents: ${missing.join(", ")}.`);
 		warnings.push(...chainStepWarnings(ctx, chain.steps));
-		return result([`Created chain '${name}' at ${targetPath}.`, ...warnings].join("\n"));
+		return result([`Created chain '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 	}
 	const agent: AgentConfig = {
-		name,
+		name: runtimeName,
+		localName: name,
+		packageName: parsedPackage.packageName,
 		description: cfg.description.trim(),
 		source: scope,
 		filePath: targetPath,
@@ -476,7 +497,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const sw = skillsWarning(ctx.cwd, agent.skills);
 	if (sw) warnings.push(sw);
 	fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
-	return result([`Created agent '${name}' at ${targetPath}.`, ...warnings].join("\n"));
+	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 }
 
 export function handleUpdate(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
@@ -496,14 +517,22 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		const oldName = target.name;
 		if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
 		if (hasKey(cfg, "description") && (typeof cfg.description !== "string" || !cfg.description.trim())) return result("config.description must be a non-empty string when provided.", true);
-		let newName: string | undefined;
+		let newLocalName = target.localName ?? frontmatterNameForConfig(target);
 		if (hasKey(cfg, "name")) {
-			newName = sanitizeName(cfg.name as string);
-			if (!newName) return result("config.name is invalid after sanitization.", true);
+			newLocalName = sanitizeName(cfg.name as string);
+			if (!newLocalName) return result("config.name is invalid after sanitization.", true);
+		}
+		let newPackageName = target.packageName;
+		if (hasKey(cfg, "package")) {
+			const parsedPackage = parsePackageConfig(cfg.package);
+			if (parsedPackage.error) return result(parsedPackage.error, true);
+			newPackageName = parsedPackage.packageName;
 		}
 		const applyError = applyAgentConfig(updated, cfg);
 		if (applyError) return result(applyError, true);
-		if (newName !== undefined) updated.name = newName;
+		updated.localName = newLocalName;
+		updated.packageName = newPackageName;
+		updated.name = buildRuntimeName(newLocalName, newPackageName);
 		if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 		if (hasKey(cfg, "model")) {
 			const mw = modelWarning(ctx, updated.model);
@@ -540,10 +569,16 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	const oldName = target.name;
 	if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
 	if (hasKey(cfg, "description") && (typeof cfg.description !== "string" || !cfg.description.trim())) return result("config.description must be a non-empty string when provided.", true);
-	let newName: string | undefined;
+	let newLocalName = target.localName ?? frontmatterNameForConfig(target);
 	if (hasKey(cfg, "name")) {
-		newName = sanitizeName(cfg.name as string);
-		if (!newName) return result("config.name is invalid after sanitization.", true);
+		newLocalName = sanitizeName(cfg.name as string);
+		if (!newLocalName) return result("config.name is invalid after sanitization.", true);
+	}
+	let newPackageName = target.packageName;
+	if (hasKey(cfg, "package")) {
+		const parsedPackage = parsePackageConfig(cfg.package);
+		if (parsedPackage.error) return result(parsedPackage.error, true);
+		newPackageName = parsedPackage.packageName;
 	}
 	let parsedSteps: ChainStepConfig[] | undefined;
 	if (hasKey(cfg, "steps")) {
@@ -551,7 +586,9 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (parsed.error) return result(parsed.error, true);
 		parsedSteps = parsed.steps!;
 	}
-	if (newName !== undefined) updated.name = newName;
+	updated.localName = newLocalName;
+	updated.packageName = newPackageName;
+	updated.name = buildRuntimeName(newLocalName, newPackageName);
 	if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 	if (parsedSteps) {
 		updated.steps = parsedSteps;

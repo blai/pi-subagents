@@ -50,6 +50,10 @@ function buildChainDetailLines(chain: ChainConfig, width: number): string[] {
 	const steps = chain.steps as DetailChainStep[];
 	const dependencyMap = buildDependencyMap(steps);
 	lines.push(truncateToWidth(chain.description, contentWidth));
+	if (chain.packageName) {
+		lines.push(truncateToWidth(`Local name: ${chain.localName ?? chain.name}`, contentWidth));
+		lines.push(truncateToWidth(`Package: ${chain.packageName}`, contentWidth));
+	}
 	lines.push("");
 	lines.push(truncateToWidth(`File: ${formatPath(chain.filePath)}`, contentWidth));
 	lines.push("");

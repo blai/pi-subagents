@@ -1,6 +1,6 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
-import { defaultSystemPromptMode, type AgentConfig, type AgentDefaultContext, type BuiltinAgentOverrideBase } from "../agents/agents.ts";
+import { buildRuntimeName, defaultSystemPromptMode, frontmatterNameForConfig, parsePackageName, type AgentConfig, type AgentDefaultContext, type BuiltinAgentOverrideBase } from "../agents/agents.ts";
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "../tui/text-editor.ts";
 import type { TextEditorState } from "../tui/text-editor.ts";
 import { pad, row, renderHeader, renderFooter, formatScrollInfo } from "../tui/render-helpers.ts";
@@ -26,7 +26,7 @@ interface CreateEditStateOptions {
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-const FIELD_ORDER = ["name", "description", "model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "tools", "extensions", "skills", "output", "reads", "progress", "interactive", "prompt"] as const;
+const FIELD_ORDER = ["name", "package", "description", "model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "tools", "extensions", "skills", "output", "reads", "progress", "interactive", "prompt"] as const;
 type ThinkingLevel = typeof THINKING_LEVELS[number];
 const PROMPT_VIEWPORT_HEIGHT = 16;
 const MODEL_SELECTOR_HEIGHT = 10;
@@ -94,12 +94,13 @@ export function createEditState(draft: AgentConfig, isNew: boolean, models: Mode
 function renderFieldValue(field: EditField, state: EditState): string {
 	const draft = state.draft;
 	switch (field) {
-		case "name": return draft.name;
+		case "name": return frontmatterNameForConfig(draft);
+		case "package": return draft.packageName ?? "";
 		case "description": return draft.description;
 		case "model": return draft.model ?? "default";
 		case "fallbackModels": return draft.fallbackModels && draft.fallbackModels.length > 0 ? draft.fallbackModels.join(", ") : "";
 		case "thinking": return draft.thinking ?? "off";
-		case "systemPromptMode": return draft.systemPromptMode ?? defaultSystemPromptMode(draft.name);
+		case "systemPromptMode": return draft.systemPromptMode ?? defaultSystemPromptMode(frontmatterNameForConfig(draft));
 		case "inheritProjectContext": return draft.inheritProjectContext ? "on" : "off";
 		case "inheritSkills": return draft.inheritSkills ? "on" : "off";
 		case "defaultContext": return draft.defaultContext ?? "auto";
@@ -118,14 +119,32 @@ function renderFieldValue(field: EditField, state: EditState): string {
 function applyFieldValue(field: EditField, state: EditState, value: string): void {
 	const draft = state.draft;
 	switch (field) {
-		case "name": draft.name = value.trim(); break;
+		case "name": {
+			const localName = value.trim();
+			draft.localName = localName || undefined;
+			draft.name = localName ? buildRuntimeName(localName, draft.packageName) : "";
+			break;
+		}
+		case "package": {
+			const parsed = parsePackageName(value, "package");
+			if (parsed.error) {
+				state.error = parsed.error;
+				break;
+			}
+			const packageName = parsed.packageName;
+			draft.packageName = packageName;
+			const localName = frontmatterNameForConfig(draft).trim();
+			draft.name = localName ? buildRuntimeName(localName, packageName) : "";
+			state.error = undefined;
+			break;
+		}
 		case "description": draft.description = value.trim(); break;
 		case "model": draft.model = value.trim() || undefined; break;
 		case "fallbackModels": draft.fallbackModels = parseCommaList(value); break;
 		case "systemPromptMode": {
 			const trimmed = value.trim();
 			if (trimmed === "") {
-				draft.systemPromptMode = defaultSystemPromptMode(draft.name);
+				draft.systemPromptMode = defaultSystemPromptMode(frontmatterNameForConfig(draft));
 				break;
 			}
 			if (trimmed === "append" || trimmed === "replace") {

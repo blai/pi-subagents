@@ -8,7 +8,9 @@ import {
 	defaultInheritProjectContext,
 	defaultInheritSkills,
 	defaultSystemPromptMode,
+	buildRuntimeName,
 	discoverAgentsAll,
+	frontmatterNameForConfig,
 	removeBuiltinAgentOverride,
 	saveBuiltinAgentOverride,
 	type AgentConfig,
@@ -238,10 +240,19 @@ export class AgentManagerComponent implements Component {
 		catch (err) { this.statusMessage = { text: err instanceof Error ? err.message : "Failed to load chain file.", type: "error" }; this.screen = "list"; }
 	}
 
+	private runtimeNameExistsInScope(kind: "agent" | "chain", scope: "user" | "project", name: string, excludePath?: string): boolean {
+		const discovered = discoverAgentsAll(this.agentData.cwd);
+		if (kind === "agent") {
+			const agents = scope === "user" ? discovered.user : discovered.project;
+			return agents.some((agent) => agent.name === name && agent.filePath !== excludePath);
+		}
+		return discovered.chains.some((chain) => chain.source === scope && chain.name === name && chain.filePath !== excludePath);
+	}
+
 	private enterNameInput(mode: NameInputState["mode"], sourceId?: string, template?: AgentTemplate): void {
 		const allowProject = Boolean(this.agentData.projectDir); let initial = ""; let scope: "user" | "project" = "user";
-		if (mode === "clone-agent" && sourceId) { const entry = this.getAgentEntry(sourceId); if (entry) { initial = `${entry.config.name}-copy`; scope = entry.config.source === "project" ? "project" : "user"; } }
-		if (mode === "clone-chain" && sourceId) { const entry = this.getChainEntry(sourceId); if (entry) { initial = `${entry.config.name}-copy`; scope = entry.config.source === "project" ? "project" : "user"; } }
+		if (mode === "clone-agent" && sourceId) { const entry = this.getAgentEntry(sourceId); if (entry) { initial = `${frontmatterNameForConfig(entry.config)}-copy`; scope = entry.config.source === "project" ? "project" : "user"; } }
+		if (mode === "clone-chain" && sourceId) { const entry = this.getChainEntry(sourceId); if (entry) { initial = `${frontmatterNameForConfig(entry.config)}-copy`; scope = entry.config.source === "project" ? "project" : "user"; } }
 		if (mode === "new-agent" && template && template.name !== "Blank") initial = slugTemplateName(template.name);
 		this.nameInputState = { mode, editor: createEditorState(initial), scope, allowProject, sourceId, template }; this.screen = "name-input";
 	}
@@ -269,7 +280,16 @@ export class AgentManagerComponent implements Component {
 				return false;
 			}
 		}
-		if (!edit.draft.name || !edit.draft.description) { edit.error = "Name and description are required."; return false; }
+		let localName = frontmatterNameForConfig(edit.draft).trim();
+		if (!edit.draft.packageName && edit.draft.name !== entry.config.name) localName = edit.draft.name.trim();
+		if (!localName || !edit.draft.description) { edit.error = "Name and description are required."; return false; }
+		edit.draft.localName = localName;
+		edit.draft.name = buildRuntimeName(localName, edit.draft.packageName);
+		const draftScope = edit.draft.source === "project" ? "project" : "user";
+		if (this.runtimeNameExistsInScope("agent", draftScope, edit.draft.name, entry.config.filePath)) {
+			edit.error = `An agent named '${edit.draft.name}' already exists in ${draftScope} scope.`;
+			return false;
+		}
 		let filePath = entry.config.filePath;
 		if (entry.isNew) {
 			const dir = edit.draft.source === "project" ? this.agentData.projectDir : this.agentData.userDir;
@@ -404,15 +424,15 @@ export class AgentManagerComponent implements Component {
 			const sourceEntry = this.getChainEntry(state.sourceId); if (!sourceEntry) { this.screen = "list"; this.tui.requestRender(); return; }
 			const dir = state.scope === "project" ? this.agentData.projectDir : this.agentData.userDir;
 			if (!dir) { state.error = "Project agents directory not found."; this.tui.requestRender(); return; }
-			const filePath = path.join(dir, `${name}.chain.md`); if (fs.existsSync(filePath)) { state.error = "A chain with that name already exists."; this.tui.requestRender(); return; }
-			try { const cloned = cloneChainConfig({ ...sourceEntry.config, name, source: state.scope, filePath }); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(filePath, serializeChain(cloned), "utf-8"); const added: ChainEntry = { id: `c${this.nextId++}`, kind: "chain", config: cloned }; this.chains.push(added); this.nameInputState = null; this.enterChainDetail(added); this.tui.requestRender(); return; }
+			const filePath = path.join(dir, `${name}.chain.md`); if (fs.existsSync(filePath) || this.runtimeNameExistsInScope("chain", state.scope, name)) { state.error = "A chain with that name already exists."; this.tui.requestRender(); return; }
+			try { const cloned = cloneChainConfig({ ...sourceEntry.config, name, localName: name, packageName: undefined, source: state.scope, filePath }); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(filePath, serializeChain(cloned), "utf-8"); const added: ChainEntry = { id: `c${this.nextId++}`, kind: "chain", config: cloned }; this.chains.push(added); this.nameInputState = null; this.enterChainDetail(added); this.tui.requestRender(); return; }
 			catch (err) { state.error = err instanceof Error ? err.message : "Failed to clone chain."; this.tui.requestRender(); return; }
 		}
 		if (state.mode === "new-chain") {
 			const dir = state.scope === "project" ? this.agentData.projectDir : this.agentData.userDir;
 			if (!dir) { state.error = "Directory not found."; this.tui.requestRender(); return; }
-			const filePath = path.join(dir, `${name}.chain.md`); if (fs.existsSync(filePath)) { state.error = "A chain with that name already exists."; this.tui.requestRender(); return; }
-			const config: ChainConfig = { name, description: "Describe this chain", source: state.scope, filePath, steps: [{ agent: "agent-name", task: "{task}" }] };
+			const filePath = path.join(dir, `${name}.chain.md`); if (fs.existsSync(filePath) || this.runtimeNameExistsInScope("chain", state.scope, name)) { state.error = "A chain with that name already exists."; this.tui.requestRender(); return; }
+			const config: ChainConfig = { name, localName: name, description: "Describe this chain", source: state.scope, filePath, steps: [{ agent: "agent-name", task: "{task}" }] };
 			try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(filePath, serializeChain(config), "utf-8"); const entry: ChainEntry = { id: `c${this.nextId++}`, kind: "chain", config }; this.chains.push(entry); this.nameInputState = null; this.enterChainEdit(entry); }
 			catch (err) { state.error = err instanceof Error ? err.message : "Failed to create chain."; }
 			this.tui.requestRender(); return;
@@ -438,7 +458,7 @@ export class AgentManagerComponent implements Component {
 		}
 		const dir = state.scope === "project" ? this.agentData.projectDir : this.agentData.userDir;
 		if (!dir) { state.error = "Project agents directory not found."; this.tui.requestRender(); return; }
-		const filePath = path.join(dir, `${name}.md`); const config: AgentConfig = { ...baseConfig, name, source: state.scope, filePath };
+		const filePath = path.join(dir, `${name}.md`); const config: AgentConfig = { ...baseConfig, name, localName: name, packageName: undefined, source: state.scope, filePath };
 		const entry: AgentEntry = { id: `a${this.nextId++}`, kind: "agent", config, isNew: true };
 		this.agents.push(entry); this.nameInputState = null; this.enterEdit(entry); this.tui.requestRender();
 	}

@@ -397,10 +397,10 @@ Agent locations, lowest to highest priority:
 | Scope | Path |
 |-------|------|
 | Builtin | `~/.pi/agent/extensions/subagent/agents/` |
-| User | `~/.pi/agent/agents/{name}.md` |
-| Project | `.pi/agents/{name}.md` |
+| User | `~/.pi/agent/agents/**/*.md` |
+| Project | `.pi/agents/**/*.md` |
 
-Project discovery also reads legacy `.agents/{name}.md` files. If both `.agents/` and `.pi/agents/` define the same project agent, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win name collisions.
+Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files are treated as chains, not agents. If both `.agents/` and `.pi/agents/` define the same parsed runtime agent name, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
 
 Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `worker` is the implementation agent for normal tasks and approved oracle handoffs.
 
@@ -459,6 +459,8 @@ A typical agent looks like this:
 ```yaml
 ---
 name: scout
+# Optional: registers this as code-analysis.scout while preserving name: scout
+package: code-analysis
 description: Fast codebase recon
 tools: read, grep, find, ls, bash, mcp:chrome-devtools
 extensions:
@@ -483,6 +485,7 @@ Important fields:
 
 | Field | Notes |
 |-------|-------|
+| `package` | Optional package identifier. A file with `name: scout` and `package: code-analysis` registers as `code-analysis.scout`; serialization keeps `name` and `package` separate. |
 | `tools` | Builtin tool allowlist. `mcp:` entries select direct MCP tools when `pi-mcp-adapter` is installed. |
 | `extensions` | Omitted means normal extensions; empty means no extensions; comma-separated values allowlist specific extensions. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
@@ -531,10 +534,10 @@ Chains are reusable `.chain.md` workflows stored next to agent files.
 
 | Scope | Path |
 |-------|------|
-| User | `~/.pi/agent/agents/{name}.chain.md` |
-| Project | `.pi/agents/{name}.chain.md` |
+| User | `~/.pi/agent/agents/**/*.chain.md` |
+| Project | `.pi/agents/**/*.chain.md` |
 
-Project discovery also reads legacy `.agents/{name}.chain.md` files. If both locations define the same parsed chain name, `.pi/agents/` wins.
+Project discovery also reads legacy `.agents/**/*.chain.md` files. Nested subdirectories are discovered recursively. If both locations define the same parsed runtime chain name, `.pi/agents/` wins. Chains support the same optional `package` frontmatter as agents; `name: review-flow` plus `package: code-analysis` runs as `code-analysis.review-flow`.
 
 Example:
 
@@ -692,10 +695,12 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "list" }
 { action: "list", agentScope: "project" }
 { action: "get", agent: "scout" }
+{ action: "get", agent: "code-analysis.scout" }
 { action: "get", chainName: "review-pipeline" }
 
 { action: "create", config: {
   name: "Code Scout",
+  package: "code-analysis",
   description: "Scans codebases for patterns and issues",
   scope: "user",
   systemPrompt: "You are a code scout...",
@@ -723,13 +728,13 @@ Agent definitions are not loaded into context by default. Management actions let
   ]
 }}
 
-{ action: "update", agent: "scout", config: { model: "openai/gpt-4o" } }
+{ action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
 { action: "update", chainName: "review-pipeline", config: { steps: [...] } }
 { action: "delete", agent: "scout" }
 { action: "delete", chainName: "review-pipeline" }
 ```
 
-`create` uses `config.scope`, not `agentScope`. `update` and `delete` use `agentScope` only when the same name exists in multiple scopes. To clear optional string fields, set them to `false` or `""`.
+`create` uses `config.scope`, not `agentScope`. `config.name` is the local frontmatter name; optional `config.package` registers the runtime name as `{package}.{name}` and is saved as separate `name` and `package` frontmatter. `update` and `delete` use the runtime name and `agentScope` only when the same runtime name exists in multiple scopes. To clear optional string fields, including `package`, set them to `false` or `""`.
 
 ### Parameter reference
 
