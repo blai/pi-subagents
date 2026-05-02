@@ -28,7 +28,7 @@ import {
 	type StepOverrides,
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
-import { executeAsyncChain, executeAsyncSingle, isAsyncAvailable } from "../background/async-execution.ts";
+import { executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
 import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -396,9 +396,9 @@ async function resumeAsyncRun(input: {
 		`Session: ${target.sessionFile}`,
 		result.details.asyncDir ? `Async dir: ${result.details.asyncDir}` : undefined,
 		revivedTarget ? `Intercom target: ${revivedTarget} (if registered)` : undefined,
-		`Follow: subagent({ action: "status", id: "${revivedId}" })`,
+		`Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
 	].filter((line): line is string => Boolean(line));
-	return { content: [{ type: "text", text: lines.join("\n") }], details: result.details };
+	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n")) }], details: result.details };
 }
 
 function resultSummaryForIntercom(result: SingleResult): string {

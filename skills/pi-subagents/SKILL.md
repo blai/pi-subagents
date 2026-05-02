@@ -263,7 +263,9 @@ without forcing each step to rediscover everything.
 
 ### Async/background
 
-Use async mode whenever the parent agent should keep working while a child runs. A normal foreground `subagent(...)` call blocks the parent until the child completes; it is appropriate when the next parent step depends on the child result. If you say you will "ask a reviewer while I continue auditing" or otherwise run local work in parallel with a child, launch with `async: true`. Do not end your turn immediately after launching that async child if you promised to keep working; continue the local inspection or other independent work, then check the async run when its result is needed.
+Use async mode whenever the parent agent should keep working while a child runs. A normal foreground `subagent(...)` call blocks the parent until the child completes; it is appropriate when the next parent step depends on the child result. If you say you will "ask a reviewer while I continue auditing" or otherwise run local work in parallel with a child, launch with `async: true`.
+
+Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection or other independent work, then check the async run when its result is needed. If there is no independent work left and you would only be running `sleep` or status polling commands to wait, end your turn instead. Pi will deliver the async completion when it arrives.
 
 ```typescript
 subagent({

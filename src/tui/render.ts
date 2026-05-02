@@ -675,6 +675,51 @@ function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number,
 	].map((line) => truncLine(line, width));
 }
 
+function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number): string[] {
+	const fullLines = buildSingleWidgetLines(job, theme, width, false);
+	if (fullLines.length <= 10 || !job.steps?.length || (job.mode !== "parallel" && !job.activeParallelGroup)) return fullLines;
+
+	const total = job.stepsTotal ?? job.steps.length;
+	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+	const lines = fullLines.slice(0, 2);
+	for (const [index, step] of job.steps.entries()) {
+		const stepStats = widgetStepStats(theme, step);
+		const activity = widgetStepActivityLine(step, width, false);
+		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
+		lines.push(`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${activitySuffix}`);
+	}
+	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", "  Press Ctrl+O for live detail · /subagents-status for output paths"));
+	return lines.map((line) => truncLine(line, width));
+}
+
+function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expanded: boolean): string[] {
+	const rows = process.stdout.rows || 30;
+	const budget = expanded
+		? Math.max(12, Math.min(24, Math.floor(rows * 0.55)))
+		: Math.max(10, Math.min(14, Math.floor(rows * 0.35)));
+	if (lines.length <= budget) return lines;
+	const visibleLines = Math.max(1, budget - 1);
+	const hiddenCount = lines.length - visibleLines;
+	const hint = expanded
+		? `… ${hiddenCount} live-detail lines hidden · /subagents-status for full detail`
+		: `… ${hiddenCount} lines hidden · Ctrl+O expands · /subagents-status for full detail`;
+	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
+}
+
+function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: unknown, theme: Theme) => Component {
+	return (_tui, theme) => {
+		const width = getTermWidth();
+		const lines = expanded
+			? buildWidgetLines(jobs, theme, width, true)
+			: jobs.length === 1
+				? compactSingleWidgetLines(jobs[0]!, theme, width)
+				: buildWidgetLines(jobs, theme, width, false);
+		const container = new Container();
+		for (const line of fitWidgetLineBudget(lines, theme, width, expanded)) container.addChild(new Text(line, 1, 0));
+		return container;
+	};
+}
+
 export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false): string[] {
 	if (jobs.length === 0) return [];
 	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded);
@@ -747,7 +792,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 function refreshAnimatedWidget(): void {
 	try {
 		if (!latestWidgetCtx?.hasUI || latestWidgetJobs.length === 0) return;
-		latestWidgetCtx.ui.setWidget(WIDGET_KEY, buildWidgetLines(latestWidgetJobs, latestWidgetCtx.ui.theme, getTermWidth(), latestWidgetCtx.ui.getToolsExpanded?.() ?? false));
+		latestWidgetCtx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(latestWidgetJobs, latestWidgetCtx.ui.getToolsExpanded?.() ?? false));
 		latestWidgetCtx.ui.requestRender?.();
 	} catch (error) {
 		if (!isStaleExtensionContextError(error)) throw error;
@@ -801,7 +846,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	latestWidgetCtx = ctx;
 	latestWidgetJobs = [...jobs];
 
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetLines(jobs, ctx.ui.theme, getTermWidth(), ctx.ui.getToolsExpanded?.() ?? false));
+	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
 	if (hasAnimatedWidgetJobs(jobs)) ensureWidgetAnimation();
 	else stopWidgetAnimation();
 }

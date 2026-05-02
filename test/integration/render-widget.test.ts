@@ -96,6 +96,42 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
 	});
 
+	it("renders a compact component widget for three active parallel agents without core truncation", () => {
+		const now = Date.now();
+		const ui = createUiContext();
+		try {
+			renderWidget(ui.ctx as never, [{
+				asyncId: "run-1",
+				asyncDir: "/tmp/1",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer", "reviewer", "reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 3,
+				completedSteps: 0,
+				stepsTotal: 3,
+				steps: [
+					{ index: 0, agent: "reviewer", status: "running", lastActivityAt: now, turnCount: 5, toolCount: 18, tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 } },
+					{ index: 1, agent: "reviewer", status: "running", lastActivityAt: now - 2000, turnCount: 4, toolCount: 13, tokens: { input: 16_000, output: 4_000, cache: 2_000, total: 22_000 } },
+					{ index: 2, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 1000, turnCount: 3, toolCount: 11, tokens: { input: 14_000, output: 3_000, cache: 2_000, total: 19_000 } },
+				],
+			}]);
+			const widget = ui.widgets.at(-1);
+			assert.equal(typeof widget, "function", "renderWidget should install a component widget, not a capped string-array widget");
+			const lines = (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
+			const text = lines.join("\n");
+			assert.match(text, /async subagent parallel \(3\) · background · \/subagents-status/);
+			assert.match(text, /Agent 1\/3: reviewer · 5 turns · 18 tool uses · 44k token · active now/);
+			assert.match(text, /Agent 2\/3: reviewer · 4 turns · 13 tool uses · 22k token · active 2s ago/);
+			assert.match(text, /Agent 3\/3: reviewer · 3 turns · 11 tool uses · 19k token · grep \| 1\.0s/);
+			assert.match(text, /Press Ctrl\+O for live detail · \/subagents-status for output paths/);
+			assert.doesNotMatch(text, /widget truncated/);
+			assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
+		} finally {
+			stopWidgetAnimation();
+		}
+	});
+
 	it("shows per-agent detail for active async parallel widget rows", () => {
 		const now = Date.now();
 		const lines = buildWidgetLines([

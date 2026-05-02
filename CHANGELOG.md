@@ -4,6 +4,8 @@
 
 ### Changed
 - Align single-run async subagent widgets and `/subagents-status` rendering with foreground subagent result styling for parallel, chain, and grouped chain runs, including inline live detail when tool output expansion is enabled, while keeping multi-job async widgets compact.
+- Render async subagent widgets through an adaptive component so active parallel agent rows fit without Pi's fixed string-widget truncation marker.
+- Tell parent agents that async runs are detached and they should end the turn instead of running sleep/poll loops when no independent work remains.
 
 ## [0.22.0] - 2026-05-02
 

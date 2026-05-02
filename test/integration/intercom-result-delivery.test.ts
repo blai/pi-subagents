@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
-import { ASYNC_DIR } from "../../src/shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR } from "../../src/shared/types.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -20,6 +20,7 @@ interface ExecutorResult {
 	details?: {
 		mode?: string;
 		results?: Array<{ agent?: string; finalOutput?: string }>;
+		asyncId?: string;
 	};
 }
 
@@ -287,6 +288,53 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			const payload = events.emitted.find((entry) => entry.channel === "subagent:result-intercom")?.payload as { to?: string; message?: string } | undefined;
 			assert.equal(payload?.to, `subagent-worker-${runId}-1`);
 			assert.match(payload?.message ?? "", /Can you clarify the last change\?/);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("resume action revives completed async runs with no-poll handoff guidance", async () => {
+		mockPi.onCall({ output: "revived answer" });
+		const runId = `resume-revive-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "child-session.jsonl");
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				sessionFile,
+				steps: [{ agent: "worker", status: "complete" }],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor();
+
+			const result = await executor.execute(
+				"resume-revive",
+				{ action: "resume", id: runId, message: "What changed?" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.match(result.content[0]?.text ?? "", /Revived async subagent from/);
+			assert.match(result.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
+			assert.match(result.content[0]?.text ?? "", /end your turn now/);
+			assert.match(result.content[0]?.text ?? "", /Status if needed: subagent\(\{ action: "status"/);
+			assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
+			const revivedId = result.details?.asyncId;
+			assert.ok(revivedId, "expected revived async id");
+			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(resultPath)) {
+				if (Date.now() > deadline) assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}

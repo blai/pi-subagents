@@ -168,6 +168,69 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("async launch messages tell the parent not to sleep-poll", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const artifactConfig = {
+			enabled: false,
+			includeInput: false,
+			includeOutput: false,
+			includeJsonl: false,
+			includeMetadata: false,
+			cleanupDays: 7,
+		};
+		const commonParams = {
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig,
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		};
+		const waitForResult = async (id: string) => {
+			const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(resultPath)) {
+				if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		};
+
+		mockPi.onCall({ output: "single done" });
+		const singleId = `async-handoff-single-${Date.now().toString(36)}`;
+		const singleResult = executeAsyncSingle(singleId, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker"),
+			...commonParams,
+		});
+		assert.match(singleResult.content[0]?.text ?? "", /Async: worker \[/);
+		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
+		assert.match(singleResult.content[0]?.text ?? "", /end your turn now/);
+		await waitForResult(singleId);
+
+		mockPi.onCall({ output: "parallel one done" });
+		mockPi.onCall({ output: "parallel two done" });
+		const parallelId = `async-handoff-parallel-${Date.now().toString(36)}`;
+		const parallelResult = executeAsyncChain(parallelId, {
+			chain: [{ parallel: [{ agent: "worker", task: "Do one" }, { agent: "reviewer", task: "Do two" }] }],
+			resultMode: "parallel",
+			agents: [makeAgent("worker"), makeAgent("reviewer")],
+			...commonParams,
+		});
+		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
+		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
+		assert.match(parallelResult.content[0]?.text ?? "", /Pi will deliver the completion/);
+		await waitForResult(parallelId);
+
+		mockPi.onCall({ output: "chain done" });
+		const chainId = `async-handoff-chain-${Date.now().toString(36)}`;
+		const chainResult = executeAsyncChain(chainId, {
+			chain: [{ agent: "worker", task: "Do chained work" }],
+			agents: [makeAgent("worker")],
+			...commonParams,
+		});
+		assert.match(chainResult.content[0]?.text ?? "", /Async chain:/);
+		assert.match(chainResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
+		await waitForResult(chainId);
+	});
+
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Async top-level report" });
 		const executor = createSubagentExecutor!({

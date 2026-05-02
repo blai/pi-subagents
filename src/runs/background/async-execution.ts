@@ -116,6 +116,16 @@ interface AsyncExecutionResult {
 	isError?: boolean;
 }
 
+export function formatAsyncStartedMessage(headline: string): string {
+	return [
+		headline,
+		"",
+		"The async run is detached. Do not run sleep timers or polling loops just to wait for it.",
+		"If you have independent work, continue that work. If you have nothing else to do until the async result arrives, end your turn now; Pi will deliver the completion when the run finishes.",
+		"Use subagent({ action: \"status\", id: \"...\" }) when you need the current status/result, or to inspect a blocked/stale run. Do not poll just to wait.",
+	].join("\n");
+}
+
 /**
  * Check if jiti is available for async execution
  */
@@ -425,7 +435,7 @@ export function executeAsyncChain(
 		.join(" -> ");
 
 	return {
-		content: [{ type: "text", text: `Async ${resultMode}: ${chainDesc} [${id}]` }],
+		content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`) }],
 		details: { mode: resultMode, results: [], asyncId: id, asyncDir },
 	};
 }
@@ -557,7 +567,7 @@ export function executeAsyncSingle(
 	}
 
 	return {
-		content: [{ type: "text", text: `Async: ${agent} [${id}]` }],
+		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
 		details: { mode: "single", results: [], asyncId: id, asyncDir },
 	};
 }
