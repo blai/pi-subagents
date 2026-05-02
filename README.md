@@ -150,11 +150,13 @@ Use `~/.pi/agent/settings.json` for a user override or `.pi/settings.json` for a
 
 Foreground runs stream progress in the conversation while they run.
 
-Background runs keep working after control returns to you. They show completion notifications and can be inspected with:
+Background runs keep working after control returns to you. They show a compact async widget, send completion notifications, and can be inspected with:
 
 ```text
 /subagents-status
 ```
+
+The status view shows active and recent runs for the current Pi session. Parallel background runs are shown as parallel work, with per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in both progress and results views, so failed or paused agents stay visible next to completed ones.
 
 You can also ask naturally:
 

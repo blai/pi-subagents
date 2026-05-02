@@ -96,6 +96,7 @@ export interface ControlEvent {
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
+export type SubagentRunMode = "single" | "parallel" | "chain";
 
 export interface SubagentResultIntercomChild {
 	agent: string;
@@ -112,7 +113,7 @@ export interface SubagentResultIntercomPayload {
 	message: string;
 	requestId?: string;
 	runId: string;
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	status: SubagentResultStatus;
 	summary: string;
 	source: "foreground" | "async";
@@ -205,7 +206,7 @@ export interface SingleResult {
 }
 
 export interface Details {
-	mode: "single" | "parallel" | "chain" | "management";
+	mode: SubagentRunMode | "management";
 	context?: "fresh" | "fork";
 	results: SingleResult[];
 	controlEvents?: ControlEvent[];
@@ -264,6 +265,7 @@ export interface AsyncStartedEvent {
 	asyncDir?: string;
 	pid?: number;
 	sessionId?: string;
+	mode?: SubagentRunMode;
 	agent?: string;
 	agents?: string[];
 	chain?: string[];
@@ -274,7 +276,7 @@ export interface AsyncStartedEvent {
 export interface AsyncStatus {
 	runId: string;
 	sessionId?: string;
-	mode: "single" | "chain";
+	mode: SubagentRunMode;
 	state: "queued" | "running" | "complete" | "failed" | "paused";
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -331,9 +333,12 @@ export interface AsyncJobState {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
-	mode?: "single" | "chain";
+	mode?: SubagentRunMode;
 	agents?: string[];
 	currentStep?: number;
+	chainStepCount?: number;
+	parallelGroups?: AsyncParallelGroupStatus[];
+	steps?: AsyncStatus["steps"];
 	stepsTotal?: number;
 	runningSteps?: number;
 	completedSteps?: number;
@@ -354,7 +359,7 @@ export interface SubagentState {
 	asyncJobs: Map<string, AsyncJobState>;
 	foregroundControls: Map<string, {
 		runId: string;
-		mode: "single" | "parallel" | "chain";
+		mode: SubagentRunMode;
 		startedAt: number;
 		updatedAt: number;
 		currentAgent?: string;

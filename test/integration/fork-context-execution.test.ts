@@ -775,8 +775,9 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.mode, "parallel");
 		assert.ok(result.details?.asyncId, "expected an asyncId for background top-level parallel runs");
-		assert.match(result.content[0]?.text ?? "", /Async chain:/);
+		assert.match(result.content[0]?.text ?? "", /Async parallel:/);
 	});
 
 	it("rejects invalid background top-level parallel requests during executor preflight", async () => {

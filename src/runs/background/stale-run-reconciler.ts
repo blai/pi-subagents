@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { RESULTS_DIR, type AsyncStatus } from "../../shared/types.ts";
+import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type SubagentRunMode } from "../../shared/types.ts";
+import { normalizeParallelGroups } from "./parallel-groups.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -11,8 +12,10 @@ interface StartedRunMetadata {
 	runId: string;
 	pid?: number;
 	sessionId?: string;
-	mode?: "single" | "chain";
+	mode?: SubagentRunMode;
 	agents?: string[];
+	chainStepCount?: number;
+	parallelGroups?: AsyncParallelGroupStatus[];
 	startedAt?: number;
 	sessionFile?: string;
 }
@@ -134,6 +137,10 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, now: number): AsyncStatus {
 	const startedAt = startedRun.startedAt ?? now;
 	const agents = startedRun.agents?.length ? startedRun.agents : ["subagent"];
+	const chainStepCount = startedRun.chainStepCount;
+	const parallelGroups = chainStepCount !== undefined
+		? normalizeParallelGroups(startedRun.parallelGroups, agents.length, chainStepCount)
+		: [];
 	return {
 		runId: startedRun.runId || path.basename(asyncDir),
 		...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
@@ -142,6 +149,9 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 		pid: startedRun.pid,
 		startedAt,
 		lastUpdate: now,
+		currentStep: 0,
+		...(chainStepCount !== undefined ? { chainStepCount } : {}),
+		...(parallelGroups.length ? { parallelGroups } : {}),
 		steps: agents.map((agent) => ({
 			agent,
 			status: "running" as const,

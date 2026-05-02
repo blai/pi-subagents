@@ -256,7 +256,17 @@ function hasAnimatedWidgetJobs(jobs: AsyncJobState[]): boolean {
 	return jobs.some((job) => job.status === "running");
 }
 
+function formatWidgetAgents(agents: string[]): string {
+	const distinct = [...new Set(agents)];
+	if (distinct.length === 1 && agents.length > 1) return `${distinct[0]} ×${agents.length}`;
+	if (agents.length > 3) return `${agents.slice(0, 2).join(", ")} +${agents.length - 2} more`;
+	return agents.join(", ");
+}
+
 function widgetJobName(job: AsyncJobState): string {
+	const agents = job.agents?.length ? formatWidgetAgents(job.agents) : undefined;
+	if (job.mode === "parallel") return agents ? `parallel · ${agents}` : "parallel";
+	if (job.activeParallelGroup) return agents ? `parallel group · ${agents}` : "parallel group";
 	if (job.agents?.length) return job.agents.join(" → ");
 	return job.mode ?? "subagent";
 }
@@ -295,6 +305,47 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
 	if (job.status === "complete") return theme.fg("success", "✓");
 	if (job.status === "paused") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
+}
+
+function widgetStepGlyph(status: string, theme: Theme): string {
+	if (status === "running") return theme.fg("accent", "▶");
+	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
+	if (status === "failed") return theme.fg("error", "✗");
+	if (status === "paused") return theme.fg("warning", "■");
+	return theme.fg("muted", "◦");
+}
+
+function widgetStepStatus(status: string, theme: Theme): string {
+	if (status === "running") return theme.fg("accent", "running");
+	if (status === "complete" || status === "completed") return theme.fg("success", "complete");
+	if (status === "failed") return theme.fg("error", "failed");
+	if (status === "paused") return theme.fg("warning", "paused");
+	return theme.fg("dim", status);
+}
+
+function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number]): string {
+	const facts: string[] = [];
+	if (step.currentTool && step.currentToolStartedAt !== undefined) facts.push(`${step.currentTool} ${formatDuration(Math.max(0, Date.now() - step.currentToolStartedAt))}`);
+	else if (step.currentTool) facts.push(step.currentTool);
+	if (step.currentPath) facts.push(shortenPath(step.currentPath));
+	if (step.turnCount !== undefined) facts.push(`${step.turnCount} turns`);
+	if (step.toolCount !== undefined) facts.push(`${step.toolCount} tools`);
+	if (step.tokens?.total) facts.push(formatTokenStat(step.tokens.total));
+	const activity = formatActivityLabel(step.lastActivityAt, step.activityState);
+	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
+	if (activity) return activity;
+	return facts.join(" · ");
+}
+
+function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme): string[] {
+	if (!job.activeParallelGroup || !job.steps?.length) return [];
+	if (job.mode !== "parallel" && job.mode !== "chain") return [];
+	const total = job.stepsTotal ?? job.steps.length;
+	return job.steps.map((step, index) => {
+		const marker = index === job.steps!.length - 1 ? "└" : "├";
+		const activity = widgetStepActivity(step);
+		return `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme)} Agent ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${activity ? ` · ${activity}` : ""}`)}`;
+	});
 }
 
 function parseParallelGroupAgentCount(label: string | undefined): number | undefined {
@@ -461,8 +512,20 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 	if (job.activeParallelGroup) {
 		const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
 		const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
-		if (job.status === "running") parts.push(formatAgentRunningLabel(running));
-		if (stepsTotal > 0) parts.push(`${done}/${stepsTotal} done`);
+		if (job.mode === "parallel") {
+			if (job.status === "running") parts.push(formatAgentRunningLabel(running));
+			if (stepsTotal > 0) parts.push(`${done}/${stepsTotal} done`);
+		} else {
+			const activeGroup = job.currentStep !== undefined
+				? job.parallelGroups?.find((group) => job.currentStep! >= group.start && job.currentStep! < group.start + group.count)
+				: job.parallelGroups?.find((group) => group.start === 0);
+			const logicalStep = activeGroup?.stepIndex ?? job.currentStep ?? 0;
+			const total = job.chainStepCount ?? stepsTotal;
+			const groupProgress = job.status === "running"
+				? `${formatAgentRunningLabel(running)} · ${done}/${stepsTotal} done`
+				: `${done}/${stepsTotal} done`;
+			parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupProgress}`);
+		}
 	} else if (job.currentStep !== undefined) {
 		parts.push(`step ${job.currentStep + 1}/${stepsTotal}`);
 	} else if (stepsTotal > 1) {
@@ -496,6 +559,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetParallelAgentDetails(job, theme),
 		]);
 		slots--;
 	}
@@ -512,6 +576,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 		items.push([
 			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+			...widgetParallelAgentDetails(job, theme),
 		]);
 		slots--;
 	}

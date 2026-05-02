@@ -20,6 +20,15 @@ interface StatusRow {
 	run?: AsyncRunSummary;
 }
 
+type AsyncRunStep = AsyncRunSummary["steps"][number];
+
+interface ChainStepSpan {
+	stepIndex: number;
+	start: number;
+	count: number;
+	isParallel: boolean;
+}
+
 interface StatusOverlayDeps {
 	sessionId: string;
 	listRunsForOverlay?: (asyncDirRoot: string, options?: AsyncRunOverlayOptions) => AsyncRunOverlayData;
@@ -43,6 +52,14 @@ function stepStatusColor(theme: Theme, status: string): string {
 	if (status === "failed") return theme.fg("error", status);
 	if (status === "paused") return theme.fg("warning", status);
 	return status;
+}
+
+function stepGlyph(theme: Theme, status: string): string {
+	if (status === "running") return theme.fg("accent", "▶");
+	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
+	if (status === "failed") return theme.fg("error", "✗");
+	if (status === "paused") return theme.fg("warning", "■");
+	return theme.fg("dim", "◦");
 }
 
 function runLabel(theme: Theme, run: AsyncRunSummary, selected: boolean): string {
@@ -75,6 +92,40 @@ function buildRows(active: AsyncRunSummary[], recent: AsyncRunSummary[]): Status
 		for (const run of recent) rows.push({ kind: "run", label: run.id, run });
 	}
 	return rows;
+}
+
+function buildChainStepSpans(run: AsyncRunSummary): ChainStepSpan[] {
+	const total = run.chainStepCount ?? run.steps.length;
+	const groups = [...(run.parallelGroups ?? [])].sort((a, b) => a.stepIndex - b.stepIndex);
+	const spans: ChainStepSpan[] = [];
+	let flatIndex = 0;
+	for (let stepIndex = 0; stepIndex < total; stepIndex++) {
+		const group = groups.find((candidate) => candidate.stepIndex === stepIndex);
+		if (group) {
+			spans.push({ stepIndex, start: group.start, count: group.count, isParallel: true });
+			flatIndex = Math.max(flatIndex, group.start + group.count);
+			continue;
+		}
+		spans.push({ stepIndex, start: flatIndex, count: flatIndex < run.steps.length ? 1 : 0, isParallel: false });
+		flatIndex++;
+	}
+	return spans;
+}
+
+function aggregateStepStatus(steps: AsyncRunStep[]): string {
+	if (steps.some((step) => step.status === "running")) return "running";
+	if (steps.some((step) => step.status === "failed")) return "failed";
+	if (steps.some((step) => step.status === "paused")) return "paused";
+	if (steps.length > 0 && steps.every((step) => step.status === "complete" || step.status === "completed")) return "complete";
+	return "pending";
+}
+
+function compactStepStats(step: AsyncRunStep): string {
+	const stats: string[] = [];
+	if (step.toolCount !== undefined) stats.push(`${step.toolCount} tools`);
+	if (step.tokens) stats.push(`${formatTokens(step.tokens.total)} tok`);
+	if (step.durationMs !== undefined) stats.push(formatDuration(step.durationMs));
+	return stats.join(" · ");
 }
 
 function resolveRunPath(asyncDir: string, filePath: string): string {
@@ -285,6 +336,13 @@ export class SubagentsStatusComponent implements Component {
 		return lines;
 	}
 
+	private formatStepActivity(step: AsyncRunStep): string {
+		if (!step.lastActivityAt) return "";
+		if (step.activityState === "needs_attention") return `no activity for ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))}`;
+		if (step.activityState === "active_long_running") return `active but long-running; last activity ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))} ago`;
+		return `active ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))} ago`;
+	}
+
 	private renderStepRows(run: AsyncRunSummary, width: number, innerW: number, options: { wrap?: boolean } = {}): string[] {
 		const lines: string[] = [];
 		for (const step of run.steps) {
@@ -294,14 +352,8 @@ export class SubagentsStatusComponent implements Component {
 				: "";
 			const duration = step.durationMs !== undefined ? ` | ${formatDuration(step.durationMs)}` : "";
 			const tokens = step.tokens ? ` | ${formatTokens(step.tokens.total)} tok` : "";
-			const activity = step.lastActivityAt
-				? step.activityState === "needs_attention"
-					? ` | no activity for ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))}`
-					: step.activityState === "active_long_running"
-						? ` | active but long-running; last activity ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))} ago`
-						: ` | active ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))} ago`
-				: "";
-			const line = `  ${step.index + 1}. ${step.agent} | ${stepStatusColor(this.theme, step.status)}${activity}${model}${attempts}${duration}${tokens}`;
+			const activity = this.formatStepActivity(step);
+			const line = `  ${step.index + 1}. ${step.agent} | ${stepStatusColor(this.theme, step.status)}${activity ? ` | ${activity}` : ""}${model}${attempts}${duration}${tokens}`;
 			if (options.wrap) {
 				lines.push(...detailRows(line, width, innerW, this.theme));
 			} else {
@@ -317,6 +369,57 @@ export class SubagentsStatusComponent implements Component {
 		}
 		if (run.steps.length === 0) {
 			lines.push(row(this.theme.fg("dim", "  No step details available yet."), width, this.theme));
+		}
+		return lines;
+	}
+
+	private renderStructuredStepRow(prefix: string, step: AsyncRunStep, width: number, innerW: number, errorIndent: string): string[] {
+		const suffix = [this.formatStepActivity(step), step.model, compactStepStats(step)].filter(Boolean).join(" · ");
+		const lines = detailRows(`${prefix}${step.agent} · ${stepStatusColor(this.theme, step.status)}${suffix ? ` · ${suffix}` : ""}`, width, innerW, this.theme);
+		if (step.error) lines.push(...detailRows(`${errorIndent}${step.error}`, width, innerW, this.theme));
+		return lines;
+	}
+
+	private renderAgentRows(run: AsyncRunSummary, width: number, innerW: number): string[] {
+		if (run.steps.length === 0) return [row(this.theme.fg("dim", "  No agent details available yet."), width, this.theme)];
+		const lines: string[] = [];
+		const total = run.steps.length;
+		for (const [index, step] of run.steps.entries()) {
+			lines.push(...this.renderStructuredStepRow(`  ${stepGlyph(this.theme, step.status)} Agent ${index + 1}/${total}: `, step, width, innerW, "     "));
+		}
+		return lines;
+	}
+
+	private renderChainProgressRows(run: AsyncRunSummary, width: number, innerW: number): string[] {
+		if (run.steps.length === 0) return [row(this.theme.fg("dim", "  No step details available yet."), width, this.theme)];
+		const lines: string[] = [];
+		const spans = buildChainStepSpans(run);
+		const total = run.chainStepCount ?? spans.length;
+		for (const span of spans) {
+			const steps = run.steps.slice(span.start, span.start + span.count);
+			const status = aggregateStepStatus(steps);
+			if (span.isParallel) {
+				const running = steps.filter((step) => step.status === "running").length;
+				const done = steps.filter((step) => step.status === "complete" || step.status === "completed").length;
+				const failed = steps.filter((step) => step.status === "failed").length;
+				const paused = steps.filter((step) => step.status === "paused").length;
+				const outcomeCounts = [`${done}/${span.count} done`];
+				if (failed > 0) outcomeCounts.push(`${failed} failed`);
+				if (paused > 0) outcomeCounts.push(`${paused} paused`);
+				if (running > 0) outcomeCounts.unshift(running === 1 ? "1 agent running" : `${running} agents running`);
+				const label = `${stepGlyph(this.theme, status)} Step ${span.stepIndex + 1}/${total}: parallel group · ${outcomeCounts.join(" · ")}`;
+				lines.push(...detailRows(`  ${label}`, width, innerW, this.theme));
+				for (const [localIndex, step] of steps.entries()) {
+					lines.push(...this.renderStructuredStepRow(`     ${stepGlyph(this.theme, step.status)} Agent ${localIndex + 1}/${span.count}: `, step, width, innerW, "        "));
+				}
+				continue;
+			}
+			const step = steps[0];
+			if (!step) {
+				lines.push(row(this.theme.fg("dim", `  ◦ Step ${span.stepIndex + 1}/${total}: pending`), width, this.theme));
+				continue;
+			}
+			lines.push(...this.renderStructuredStepRow(`  ${stepGlyph(this.theme, step.status)} Step ${span.stepIndex + 1}/${total}: `, step, width, innerW, "     "));
 		}
 		return lines;
 	}
@@ -338,8 +441,16 @@ export class SubagentsStatusComponent implements Component {
 		body.push(...detailRows(`${run.id} | ${statusColor(this.theme, run.state)} | ${run.mode} | ${stepLabel} | ${duration}`, width, innerW, this.theme));
 		if (activity) body.push(...detailRows(activity, width, innerW, this.theme));
 		body.push(row("", width, this.theme));
-		body.push(row(this.theme.fg("accent", "Steps"), width, this.theme));
-		body.push(...this.renderStepRows(run, width, innerW, { wrap: true }));
+		if (run.mode === "chain" && (run.chainStepCount !== undefined || run.parallelGroups?.length)) {
+			body.push(row(this.theme.fg("accent", run.state === "running" ? "Chain progress" : "Chain results"), width, this.theme));
+			body.push(...this.renderChainProgressRows(run, width, innerW));
+		} else if (run.mode === "parallel") {
+			body.push(row(this.theme.fg("accent", "Agents"), width, this.theme));
+			body.push(...this.renderAgentRows(run, width, innerW));
+		} else {
+			body.push(row(this.theme.fg("accent", "Steps"), width, this.theme));
+			body.push(...this.renderStepRows(run, width, innerW, { wrap: true }));
+		}
 
 		const eventsPath = path.join(run.asyncDir, "events.jsonl");
 		const eventResult = readRecentEvents(eventsPath, DETAIL_EVENT_LIMIT);

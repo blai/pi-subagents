@@ -59,6 +59,89 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows parallel mode and aggregate progress for top-level async parallel runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-parallel-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-parallel");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-parallel",
+				mode: "parallel",
+				state: "running",
+				pid: 12345,
+				startedAt: 100,
+				lastUpdate: 100,
+				currentStep: 0,
+				chainStepCount: 1,
+				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+				steps: [
+					{ agent: "reviewer", status: "running", startedAt: 100 },
+					{ agent: "reviewer", status: "running", startedAt: 100 },
+					{ agent: "reviewer", status: "pending" },
+				],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-parallel" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 200,
+			});
+
+			const text = textContent(result);
+			assert.match(text, /Mode: parallel/);
+			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
+			assert.match(text, /Agent 1\/3: reviewer running/);
+			assert.match(text, /Agent 2\/3: reviewer running/);
+			assert.match(text, /Agent 3\/3: reviewer pending/);
+			assert.doesNotMatch(text, /Step 1: reviewer/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("labels chain parallel group children with logical step and agent numbers", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-chain-parallel-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-chain");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-chain",
+				mode: "chain",
+				state: "running",
+				pid: 12345,
+				startedAt: 100,
+				lastUpdate: 100,
+				currentStep: 1,
+				chainStepCount: 3,
+				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+				steps: [
+					{ agent: "scout", status: "complete", startedAt: 100 },
+					{ agent: "reviewer", status: "running", startedAt: 100 },
+					{ agent: "auditor", status: "pending" },
+					{ agent: "writer", status: "pending" },
+				],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-chain" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 200,
+			});
+
+			const text = textContent(result);
+			assert.match(text, /Step 1\/3: scout complete/);
+			assert.match(text, /Step 2\/3 Agent 1\/2: reviewer running/);
+			assert.match(text, /Step 2\/3 Agent 2\/2: auditor pending/);
+			assert.match(text, /Step 3\/3: writer pending/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows expected intercom target for still-running async steps", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-intercom-"));
 		try {

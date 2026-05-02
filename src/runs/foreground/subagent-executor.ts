@@ -66,6 +66,7 @@ import {
 	type MaxOutputConfig,
 	type ResolvedControlConfig,
 	type SingleResult,
+	type SubagentRunMode,
 	type SubagentState,
 	DEFAULT_ARTIFACT_CONFIG,
 	SUBAGENT_ACTIONS,
@@ -424,7 +425,7 @@ async function emitForegroundResultIntercom(input: {
 	pi: ExtensionAPI;
 	intercomBridge: IntercomBridgeState;
 	runId: string;
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	results: SingleResult[];
 	chainSteps?: number;
 }): Promise<ReturnType<typeof buildSubagentResultIntercomPayload> | null> {
@@ -460,7 +461,7 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	pi: ExtensionAPI;
 	intercomBridge: IntercomBridgeState;
 	runId: string;
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	details: Details;
 }): Promise<{ text: string; details: Details } | null> {
 	const payload = await emitForegroundResultIntercom({

@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatTokens, shortenPath } from "../../shared/formatters.ts";
-import { type ActivityState, type AsyncParallelGroupStatus, type AsyncStatus, type TokenUsage } from "../../shared/types.ts";
+import { type ActivityState, type AsyncParallelGroupStatus, type AsyncStatus, type SubagentRunMode, type TokenUsage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 
 interface AsyncRunStepSummary {
@@ -36,7 +37,7 @@ export interface AsyncRunSummary {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
-	mode: "single" | "chain";
+	mode: SubagentRunMode;
 	cwd?: string;
 	startedAt: number;
 	lastUpdate?: number;
@@ -49,43 +50,6 @@ export interface AsyncRunSummary {
 	outputFile?: string;
 	totalTokens?: TokenUsage;
 	sessionFile?: string;
-}
-
-function isValidParallelGroup(group: AsyncParallelGroupStatus, stepCount: number, chainStepCount: number): boolean {
-	return Number.isInteger(group.start)
-		&& Number.isInteger(group.count)
-		&& Number.isInteger(group.stepIndex)
-		&& group.start >= 0
-		&& group.count > 0
-		&& group.stepIndex >= 0
-		&& group.stepIndex < chainStepCount
-		&& group.start + group.count <= stepCount;
-}
-
-function normalizeParallelGroups(groups: AsyncParallelGroupStatus[] | undefined, stepCount: number, chainStepCount: number): AsyncParallelGroupStatus[] {
-	if (!groups?.length) return [];
-	return groups.filter((group) => isValidParallelGroup(group, stepCount, chainStepCount));
-}
-
-function flatToLogicalStepIndex(flatIndex: number, chainStepCount: number, parallelGroups: AsyncParallelGroupStatus[]): number {
-	let logicalIndex = 0;
-	let cursor = 0;
-	for (const group of parallelGroups) {
-		while (logicalIndex < chainStepCount && cursor < group.start) {
-			if (flatIndex === cursor) return logicalIndex;
-			logicalIndex++;
-			cursor++;
-		}
-		if (flatIndex >= group.start && flatIndex < group.start + group.count) return group.stepIndex;
-		logicalIndex = Math.max(logicalIndex, group.stepIndex + 1);
-		cursor = group.start + group.count;
-	}
-	while (logicalIndex < chainStepCount) {
-		if (flatIndex === cursor) return logicalIndex;
-		logicalIndex++;
-		cursor++;
-	}
-	return Math.max(0, chainStepCount - 1);
 }
 
 interface AsyncRunListOptions {
@@ -300,6 +264,18 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	return parts.join(" | ");
 }
 
+function formatParallelProgress(steps: Pick<AsyncRunStepSummary, "status">[], total: number, showRunning: boolean): string {
+	const running = steps.filter((step) => step.status === "running").length;
+	const done = steps.filter((step) => step.status === "complete" || step.status === "completed").length;
+	const failed = steps.filter((step) => step.status === "failed").length;
+	const paused = steps.filter((step) => step.status === "paused").length;
+	const parts = [`${done}/${total} done`];
+	if (showRunning) parts.unshift(running === 1 ? "1 agent running" : `${running} agents running`);
+	if (failed > 0) parts.push(`${failed} failed`);
+	if (paused > 0) parts.push(`${paused} paused`);
+	return parts.join(" · ");
+}
+
 export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | "state" | "currentStep" | "chainStepCount" | "parallelGroups" | "steps">): string {
 	const stepCount = run.steps.length || 1;
 	const chainStepCount = run.chainStepCount ?? stepCount;
@@ -307,16 +283,13 @@ export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | 
 	const activeGroup = run.currentStep !== undefined
 		? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
 		: undefined;
-	if (run.mode === "chain" && activeGroup) {
+	if (activeGroup) {
 		const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);
-		const running = groupSteps.filter((step) => step.status === "running").length;
-		const done = groupSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
-		const runningLabel = running === 1 ? "1 agent running" : `${running} agents running`;
-		const groupLabel = run.state === "running"
-			? `parallel group: ${runningLabel} · ${done}/${activeGroup.count} done`
-			: `parallel group: ${done}/${activeGroup.count} done`;
-		return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · ${groupLabel}`;
+		const groupLabel = formatParallelProgress(groupSteps, activeGroup.count, run.state === "running");
+		if (run.mode === "parallel") return groupLabel;
+		return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
 	}
+	if (run.mode === "parallel") return formatParallelProgress(run.steps, stepCount, run.state === "running");
 	if (run.mode === "chain" && run.currentStep !== undefined && groups.length > 0) {
 		const logicalStep = flatToLogicalStepIndex(run.currentStep, chainStepCount, groups);
 		return `step ${logicalStep + 1}/${chainStepCount}`;

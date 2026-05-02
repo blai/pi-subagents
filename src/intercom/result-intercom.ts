@@ -6,6 +6,7 @@ import {
 	type SubagentResultIntercomChild,
 	type SubagentResultIntercomPayload,
 	type SubagentResultStatus,
+	type SubagentRunMode,
 	SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
 } from "../shared/types.ts";
@@ -61,7 +62,7 @@ function resolveGroupedStatus(children: SubagentResultIntercomChild[]): Subagent
 interface GroupedResultIntercomMessageInput {
 	to: string;
 	runId: string;
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	source: "foreground" | "async";
 	children: SubagentResultIntercomChild[];
 	asyncId?: string;
@@ -84,7 +85,7 @@ function asyncResumeGuidance(input: {
 
 function formatSubagentResultIntercomMessage(input: {
 	runId: string;
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	status: SubagentResultStatus;
 	source: "foreground" | "async";
 	children: SubagentResultIntercomChild[];
@@ -218,7 +219,7 @@ export function stripDetailsOutputsForIntercomReceipt(details: Details): Details
 }
 
 export function formatSubagentResultReceipt(input: {
-	mode: "single" | "parallel" | "chain";
+	mode: SubagentRunMode;
 	runId: string;
 	payload: SubagentResultIntercomPayload;
 }): string {

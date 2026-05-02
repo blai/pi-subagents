@@ -136,6 +136,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			const job = state.asyncJobs.get("run-parallel-start");
 			assert.deepEqual(job?.agents, ["scout", "reviewer", "worker"]);
+			assert.equal(job?.chainStepCount, 2);
+			assert.deepEqual(job?.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
 			assert.equal(job?.stepsTotal, 3);
 			assert.equal(job?.activeParallelGroup, true);
 		} finally {
@@ -233,7 +235,16 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				now: () => Date.now() + 2000,
 			});
 			tracker.resetJobs(ui.ctx as never);
-			tracker.handleStarted({ id: "run-no-status", asyncDir: runDir, agent: "worker", pid: 12345, sessionId: "session-current" });
+			tracker.handleStarted({
+				id: "run-no-status",
+				asyncDir: runDir,
+				pid: 12345,
+				sessionId: "session-current",
+				mode: "parallel",
+				agents: ["scout", "reviewer", "worker"],
+				chainStepCount: 1,
+				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+			});
 
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -242,6 +253,15 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const result = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
+			assert.equal(status.mode, "parallel");
+			assert.equal(status.currentStep, 0);
+			assert.equal(status.chainStepCount, 1);
+			assert.deepEqual(status.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
+			assert.deepEqual(status.steps.map((step: { agent: string; status: string }) => [step.agent, step.status]), [
+				["scout", "failed"],
+				["reviewer", "failed"],
+				["worker", "failed"],
+			]);
 			assert.equal(result.success, false);
 			assert.equal(result.sessionId, "session-current");
 			assert.ok(ui.renderRequests > 0, "expected startup-crash repair cleanup to request a rerender");

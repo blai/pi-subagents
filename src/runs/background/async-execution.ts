@@ -24,6 +24,7 @@ import {
 	type Details,
 	type MaxOutputConfig,
 	type ResolvedControlConfig,
+	type SubagentRunMode,
 	ASYNC_DIR,
 	RESULTS_DIR,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -64,7 +65,7 @@ interface AsyncExecutionContext {
 
 interface AsyncChainParams {
 	chain: ChainStep[];
-	resultMode?: "parallel" | "chain";
+	resultMode?: Exclude<SubagentRunMode, "single">;
 	agents: AgentConfig[];
 	ctx: AsyncExecutionContext;
 	availableModels?: AvailableModelInfo[];
@@ -160,7 +161,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	return { pid: proc.pid };
 }
 
-function formatAsyncStartError(mode: "single" | "chain", message: string): AsyncExecutionResult {
+function formatAsyncStartError(mode: SubagentRunMode, message: string): AsyncExecutionResult {
 	return {
 		content: [{ type: "text", text: message }],
 		isError: true,
@@ -198,6 +199,7 @@ export function executeAsyncChain(
 		controlIntercomTarget,
 		childIntercomTarget,
 	} = params;
+	const resultMode = params.resultMode ?? "chain";
 	const chainSkills = params.chainSkills ?? [];
 	const availableModels = params.availableModels;
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
@@ -211,7 +213,7 @@ export function executeAsyncChain(
 				return {
 					content: [{ type: "text", text: `Unknown agent: ${agentName}` }],
 					isError: true,
-					details: { mode: "chain" as const, results: [] },
+					details: { mode: resultMode, results: [] },
 				};
 			}
 		}
@@ -225,7 +227,7 @@ export function executeAsyncChain(
 		return {
 			content: [{ type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` }],
 			isError: true,
-			details: { mode: "chain" as const, results: [] },
+			details: { mode: resultMode, results: [] },
 		};
 	}
 
@@ -329,7 +331,7 @@ export function executeAsyncChain(
 			return buildSeqStep(s as SequentialStep, nextSessionFile());
 		});
 	} catch (error) {
-		if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError) return formatAsyncStartError("chain", error.message);
+		if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError) return formatAsyncStartError(resultMode, error.message);
 		throw error;
 	}
 	let childTargetIndex = 0;
@@ -363,18 +365,18 @@ export function executeAsyncChain(
 				controlConfig,
 				controlIntercomTarget,
 				childIntercomTargets,
-				resultMode: params.resultMode ?? "chain",
+				resultMode,
 			},
 			id,
 			runnerCwd,
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return formatAsyncStartError("chain", `Failed to start async chain '${id}': ${message}`);
+		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${message}`);
 	}
 
 	if (spawnResult.error) {
-		return formatAsyncStartError("chain", `Failed to start async chain '${id}': ${spawnResult.error}`);
+		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${spawnResult.error}`);
 	}
 
 	if (spawnResult.pid) {
@@ -400,6 +402,7 @@ export function executeAsyncChain(
 			id,
 			pid: spawnResult.pid,
 			sessionId: ctx.currentSessionId,
+			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
 			task: isParallelStep(firstStep)
@@ -422,8 +425,8 @@ export function executeAsyncChain(
 		.join(" -> ");
 
 	return {
-		content: [{ type: "text", text: `Async chain: ${chainDesc} [${id}]` }],
-		details: { mode: "chain", results: [], asyncId: id, asyncDir },
+		content: [{ type: "text", text: `Async ${resultMode}: ${chainDesc} [${id}]` }],
+		details: { mode: resultMode, results: [], asyncId: id, asyncDir },
 	};
 }
 
@@ -545,6 +548,7 @@ export function executeAsyncSingle(
 			id,
 			pid: spawnResult.pid,
 			sessionId: ctx.currentSessionId,
+			mode: "single",
 			agent,
 			task: task?.slice(0, 50),
 			cwd: runnerCwd,

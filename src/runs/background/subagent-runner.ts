@@ -16,6 +16,7 @@ import {
 	type AsyncStatus,
 	type ModelAttempt,
 	type ResolvedControlConfig,
+	type SubagentRunMode,
 	type Usage,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
@@ -90,7 +91,7 @@ interface SubagentRunConfig {
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
-	resultMode?: "single" | "parallel" | "chain";
+	resultMode?: SubagentRunMode;
 }
 
 interface StepResult {
@@ -472,7 +473,7 @@ function writeRunLog(
 	logPath: string,
 	input: {
 		id: string;
-		mode: "single" | "chain";
+		mode: SubagentRunMode;
 		cwd: string;
 		startedAt: number;
 		endedAt: number;
@@ -878,7 +879,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const statusPayload: RunnerStatusPayload = {
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
-		mode: flatSteps.length > 1 ? "chain" : "single",
+		mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
 		state: "running",
 		lastActivityAt: overallStartTime,
 		startedAt: overallStartTime,

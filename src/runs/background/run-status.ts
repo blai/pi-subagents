@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import { formatAsyncRunList, listAsyncRuns } from "./async-status.ts";
-import { ASYNC_DIR, RESULTS_DIR, type Details } from "../../shared/types.ts";
+import { formatAsyncRunList, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
+import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 
 interface RunStatusParams {
@@ -29,6 +30,19 @@ function activityText(activityState: unknown, lastActivityAt: unknown): string |
 
 function canShowRevive(stepCount: number, sessionFile: unknown): sessionFile is string {
 	return stepCount === 1 && typeof sessionFile === "string" && fs.existsSync(sessionFile);
+}
+
+function stepLineLabel(status: AsyncStatus, index: number): string {
+	const steps = status.steps ?? [];
+	if (status.mode === "parallel") return `Agent ${index + 1}/${steps.length || 1}`;
+	if (status.mode === "chain") {
+		const chainStepCount = status.chainStepCount ?? (steps.length || 1);
+		const groups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
+		const group = groups.find((candidate) => index >= candidate.start && index < candidate.start + candidate.count);
+		if (group) return `Step ${group.stepIndex + 1}/${chainStepCount} Agent ${index - group.start + 1}/${group.count}`;
+		return `Step ${flatToLogicalStepIndex(index, chainStepCount, groups) + 1}/${chainStepCount}`;
+	}
+	return `Step ${index + 1}`;
 }
 
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
@@ -89,9 +103,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
-			const stepsTotal = status.steps?.length ?? 1;
-			const current = status.currentStep !== undefined ? status.currentStep + 1 : undefined;
-			const stepLine = current !== undefined ? `Step: ${current}/${stepsTotal}` : `Steps: ${stepsTotal}`;
+			const progressLabel = formatAsyncRunProgressLabel({
+				mode: status.mode,
+				state: status.state,
+				currentStep: status.currentStep,
+				chainStepCount: status.chainStepCount,
+				parallelGroups: status.parallelGroups,
+				steps: (status.steps ?? []).map((step, index) => ({ index, agent: step.agent, status: step.status })),
+			});
 			const started = new Date(status.startedAt).toISOString();
 			const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
 			const statusActivityText = status.state === "running" ? activityText(status.activityState, status.lastActivityAt) : undefined;
@@ -101,7 +120,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				`State: ${status.state}`,
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				`Mode: ${status.mode}`,
-				stepLine,
+				`Progress: ${progressLabel}`,
 				`Started: ${started}`,
 				`Updated: ${updated}`,
 				`Dir: ${asyncDir}`,
@@ -111,7 +130,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			for (const [index, step] of (status.steps ?? []).entries()) {
 				const stepActivityText = step.status === "running" ? activityText(step.activityState, step.lastActivityAt) : undefined;
 				const errorText = step.error ? `, error: ${step.error}` : "";
-				lines.push(`Step ${index + 1}: ${step.agent} ${step.status}${stepActivityText ? `, ${stepActivityText}` : ""}${errorText}`);
+				lines.push(`${stepLineLabel(status, index)}: ${step.agent} ${step.status}${stepActivityText ? `, ${stepActivityText}` : ""}${errorText}`);
 				if (step.status === "running") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
 				}

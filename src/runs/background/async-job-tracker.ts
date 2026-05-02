@@ -5,7 +5,6 @@ import { renderWidget } from "../../tui/render.ts";
 import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
 import {
 	type AsyncJobState,
-	type AsyncParallelGroupStatus,
 	type AsyncStartedEvent,
 	type ControlEvent,
 	type SubagentState,
@@ -15,24 +14,8 @@ import {
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-
-
-function isValidParallelGroup(group: AsyncParallelGroupStatus, stepCount: number, chainStepCount: number): boolean {
-	return Number.isInteger(group.start)
-		&& Number.isInteger(group.count)
-		&& Number.isInteger(group.stepIndex)
-		&& group.start >= 0
-		&& group.count > 0
-		&& group.stepIndex >= 0
-		&& group.stepIndex < chainStepCount
-		&& group.start + group.count <= stepCount;
-}
-
-function normalizeParallelGroups(groups: AsyncParallelGroupStatus[] | undefined, stepCount: number, chainStepCount: number): AsyncParallelGroupStatus[] {
-	if (!groups?.length) return [];
-	return groups.filter((group) => isValidParallelGroup(group, stepCount, chainStepCount));
-}
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -148,6 +131,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							sessionId: job.sessionId,
 							mode: job.mode,
 							agents: job.agents,
+							chainStepCount: job.chainStepCount,
+							parallelGroups: job.parallelGroups,
 							startedAt: job.startedAt,
 							sessionFile: job.sessionFile,
 						},
@@ -166,10 +151,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.toolCount = status.toolCount ?? job.toolCount;
 						job.mode = status.mode;
 						job.currentStep = status.currentStep ?? job.currentStep;
+						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 						job.startedAt = status.startedAt ?? job.startedAt;
 						job.updatedAt = status.lastUpdate ?? Date.now();
 						if (status.steps?.length) {
 							const groups = normalizeParallelGroups(status.parallelGroups, status.steps.length, status.chainStepCount ?? status.steps.length);
+							job.parallelGroups = groups.length ? groups : job.parallelGroups;
 							job.hasParallelGroups = groups.length > 0 || job.hasParallelGroups;
 							const activeGroup = status.currentStep !== undefined
 								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
@@ -179,6 +166,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 								: status.steps;
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = visibleSteps.map((step) => step.agent);
+							job.steps = visibleSteps;
 							job.stepsTotal = visibleSteps.length;
 							job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
 							job.completedSteps = visibleSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
@@ -228,8 +216,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			status: "queued",
 			pid: typeof info.pid === "number" ? info.pid : undefined,
 			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
-			mode: info.chain ? "chain" : "single",
+			mode: info.mode ?? (info.chain ? "chain" : "single"),
 			agents,
+			chainStepCount: info.chainStepCount,
+			parallelGroups: validParallelGroups,
 			stepsTotal: firstGroupCount ?? agents?.length,
 			hasParallelGroups: validParallelGroups.length > 0,
 			activeParallelGroup: Boolean(firstGroupCount && firstGroupCount > 0),

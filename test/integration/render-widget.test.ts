@@ -75,12 +75,73 @@ describe("subagent async widget rendering", () => {
 
 	it("uses parallel running/done wording for async jobs with parallel groups", () => {
 		const lines = buildWidgetLines([
-			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", agents: ["scout", "reviewer", "worker"], hasParallelGroups: true, activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
+			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["scout", "reviewer", "worker"], hasParallelGroups: true, activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
 		], theme, 120);
 
 		const text = lines.join("\n");
+		assert.match(text, /parallel · scout, reviewer, worker/);
 		assert.match(text, /3 agents running · 0\/3 done/);
 		assert.doesNotMatch(text, /step 1\/3/);
+	});
+
+	it("collapses repeated async parallel agent names", () => {
+		const lines = buildWidgetLines([
+			{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", mode: "parallel", agents: ["reviewer", "reviewer", "reviewer"], activeParallelGroup: true, runningSteps: 3, completedSteps: 0, stepsTotal: 3 },
+		], theme, 120);
+
+		const text = lines.join("\n");
+		assert.match(text, /parallel · reviewer ×3 · 3 agents running/);
+		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
+	});
+
+	it("shows per-agent detail for active async parallel widget rows", () => {
+		const now = Date.now();
+		const lines = buildWidgetLines([
+			{
+				asyncId: "run-1",
+				asyncDir: "/tmp/1",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer", "reviewer", "reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 2,
+				completedSteps: 1,
+				stepsTotal: 3,
+				steps: [
+					{ agent: "reviewer", status: "running", lastActivityAt: now, toolCount: 2 },
+					{ agent: "reviewer", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
+					{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
+				],
+			},
+		], theme, 160);
+
+		const text = lines.join("\n");
+		assert.match(text, /parallel · reviewer ×3 · 2 agents running · 1\/3 done/);
+		assert.match(text, /Agent 1\/3: reviewer · running · active now · 2 tools/);
+		assert.match(text, /Agent 2\/3: reviewer · running · read 2\.0s/);
+		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k tok/);
+	});
+
+	it("includes logical chain context for active async chain parallel groups", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "run-chain",
+				asyncDir: "/tmp/chain",
+				status: "running",
+				mode: "chain",
+				agents: ["reviewer", "auditor"],
+				activeParallelGroup: true,
+				currentStep: 1,
+				chainStepCount: 3,
+				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+				runningSteps: 1,
+				completedSteps: 1,
+				stepsTotal: 2,
+			},
+		], theme, 160);
+
+		const text = lines.join("\n");
+		assert.match(text, /step 2\/3 · parallel group: 1 agent running · 1\/2 done/);
 	});
 
 	it("shows explicit overflow counts for hidden work", () => {

@@ -42,6 +42,25 @@ function createTestTheme(): StatusTheme {
 	} as StatusTheme;
 }
 
+function renderDetailFor(run: AsyncRunOverlayData["active"][number], placement: "active" | "recent" = "active"): string {
+	const component = new SubagentsStatusComponent(
+		createTestTui(() => {}),
+		createTestTheme(),
+		() => {},
+		{
+			sessionId: "session-current",
+			listRunsForOverlay: () => placement === "active" ? { active: [run], recent: [] } : { active: [], recent: [run] },
+			refreshMs: 1000,
+		},
+	);
+	try {
+		component.handleInput("\r");
+		return component.render(160).join("\n");
+	} finally {
+		component.dispose();
+	}
+}
+
 describe("SubagentsStatusComponent", () => {
 	it("scopes overlay listing to the provided session id", () => {
 		let receivedOptions: unknown;
@@ -66,12 +85,12 @@ describe("SubagentsStatusComponent", () => {
 		}
 	});
 
-	it("uses parallel-running wording in summary rows for explicit parallel groups", () => {
+	it("uses parallel-running wording in summary rows for top-level parallel runs", () => {
 		const parallelRun = {
 			id: "run-parallel",
 			asyncDir: "/tmp/run-parallel",
 			state: "running" as const,
-			mode: "chain" as const,
+			mode: "parallel" as const,
 			cwd: "/tmp/run-parallel",
 			startedAt: 100,
 			lastUpdate: 200,
@@ -96,7 +115,8 @@ describe("SubagentsStatusComponent", () => {
 		);
 		try {
 			const output = component.render(160).join("\n");
-			assert.match(output, /step 1\/1 · parallel group: 1 agent running · 1\/3/);
+			assert.match(output, /parallel \| 1 agent running · 1\/3/);
+			assert.doesNotMatch(output, /step 1\/1/);
 			assert.doesNotMatch(output, /step 2\/3/);
 		} finally {
 			component.dispose();
@@ -196,6 +216,117 @@ describe("SubagentsStatusComponent", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("renders top-level async parallel detail with agent rows", () => {
+		const parallelRun = {
+			id: "run-parallel",
+			asyncDir: "/tmp/run-parallel",
+			state: "running" as const,
+			mode: "parallel" as const,
+			cwd: "/tmp/run-parallel",
+			startedAt: Date.now() - 30_000,
+			lastUpdate: Date.now(),
+			currentStep: 0,
+			chainStepCount: 1,
+			parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+			steps: [
+				{ index: 0, agent: "scout", status: "running", toolCount: 2 },
+				{ index: 1, agent: "reviewer", status: "pending" },
+				{ index: 2, agent: "worker", status: "pending" },
+			],
+		};
+		const detail = renderDetailFor(parallelRun);
+		assert.match(detail, /Agents/);
+		assert.match(detail, /▶ Agent 1\/3: scout · running · 2 tools/);
+		assert.match(detail, /◦ Agent 2\/3: reviewer · pending/);
+		assert.doesNotMatch(detail, /Steps/);
+		assert.doesNotMatch(detail, /1\. scout/);
+	});
+
+	it("renders running async chain detail as grouped chain progress", () => {
+		const chainRun = {
+			id: "run-chain",
+			asyncDir: "/tmp/run-chain",
+			state: "running" as const,
+			mode: "chain" as const,
+			cwd: "/tmp/run-chain",
+			startedAt: Date.now() - 30_000,
+			lastUpdate: Date.now(),
+			currentStep: 1,
+			chainStepCount: 3,
+			parallelGroups: [{ start: 1, count: 4, stepIndex: 1 }],
+			steps: [
+				{ index: 0, agent: "scout", status: "complete", durationMs: 3_000 },
+				{ index: 1, agent: "reviewer", status: "running", toolCount: 4, durationMs: 12_000 },
+				{ index: 2, agent: "auditor", status: "complete" },
+				{ index: 3, agent: "critic", status: "failed" },
+				{ index: 4, agent: "blocker", status: "paused" },
+				{ index: 5, agent: "writer", status: "pending" },
+			],
+		};
+		const detail = renderDetailFor(chainRun);
+		assert.match(detail, /Chain progress/);
+		assert.match(detail, /✓ Step 1\/3: scout · complete/);
+		assert.match(detail, /▶ Step 2\/3: parallel group · 1 agent running · 1\/4 done · 1 failed · 1 paused/);
+		assert.match(detail, /▶ Agent 1\/4: reviewer · running · 4 tools · 12\.0s/);
+		assert.match(detail, /✓ Agent 2\/4: auditor · complete/);
+		assert.match(detail, /✗ Agent 3\/4: critic · failed/);
+		assert.match(detail, /■ Agent 4\/4: blocker · paused/);
+		assert.match(detail, /◦ Step 3\/3: writer · pending/);
+		assert.doesNotMatch(detail, /Steps\n/);
+	});
+
+	it("renders terminal async chain detail as grouped chain results", () => {
+		const chainRun = {
+			id: "run-chain-failed",
+			asyncDir: "/tmp/run-chain-failed",
+			state: "failed" as const,
+			mode: "chain" as const,
+			cwd: "/tmp/run-chain-failed",
+			startedAt: Date.now() - 30_000,
+			lastUpdate: Date.now(),
+			currentStep: 1,
+			chainStepCount: 3,
+			parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+			steps: [
+				{ index: 0, agent: "scout", status: "complete" },
+				{ index: 1, agent: "reviewer", status: "failed" },
+				{ index: 2, agent: "auditor", status: "complete" },
+				{ index: 3, agent: "writer", status: "pending" },
+			],
+		};
+		const detail = renderDetailFor(chainRun, "recent");
+		assert.match(detail, /Chain results/);
+		assert.match(detail, /✓ Step 1\/3: scout · complete/);
+		assert.match(detail, /✗ Step 2\/3: parallel group · 1\/2 done · 1 failed/);
+		assert.match(detail, /✗ Agent 1\/2: reviewer · failed/);
+		assert.match(detail, /✓ Agent 2\/2: auditor · complete/);
+		assert.match(detail, /◦ Step 3\/3: writer · pending/);
+		assert.doesNotMatch(detail, /Steps\n/);
+	});
+
+	it("omits running counts for inactive chain parallel groups", () => {
+		const chainRun = {
+			id: "run-chain-complete-group",
+			asyncDir: "/tmp/run-chain-complete-group",
+			state: "running" as const,
+			mode: "chain" as const,
+			cwd: "/tmp/run-chain-complete-group",
+			startedAt: Date.now() - 30_000,
+			lastUpdate: Date.now(),
+			currentStep: 2,
+			chainStepCount: 2,
+			parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+			steps: [
+				{ index: 0, agent: "scout", status: "complete" },
+				{ index: 1, agent: "reviewer", status: "complete" },
+				{ index: 2, agent: "auditor", status: "failed" },
+			],
+		};
+		const detail = renderDetailFor(chainRun);
+		assert.match(detail, /✗ Step 2\/2: parallel group · 1\/2 done · 1 failed/);
+		assert.doesNotMatch(detail, /0 agents running/);
 	});
 
 	it("keeps detail selection across refresh when a run moves to Recent", async () => {
