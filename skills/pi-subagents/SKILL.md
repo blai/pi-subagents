@@ -183,11 +183,10 @@ Agent files can live in:
 - legacy `.agents/**/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
 
 Chains live in:
-- `~/.pi/agent/agents/**/*.chain.md`
-- `.pi/agents/**/*.chain.md`
-- legacy `.agents/**/*.chain.md`
+- `~/.pi/agent/chains/**/*.chain.md` — user scope
+- `.pi/chains/**/*.chain.md` — project scope
 
-Discovery is recursive. `.chain.md` files are chains, not agents. Agents and chains can set optional frontmatter `package: code-analysis`; `name: scout` plus `package: code-analysis` registers as runtime name `code-analysis.scout` while serialization keeps `name` and `package` separate.
+Discovery is recursive. `.chain.md` files do not define agents. Agents and chains can set optional frontmatter `package: code-analysis`; `name: scout` plus `package: code-analysis` registers as runtime name `code-analysis.scout` while serialization keeps `name` and `package` separate.
 
 Precedence is by parsed runtime name:
 1. project scope

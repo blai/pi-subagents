@@ -77,6 +77,8 @@ describe("buildDoctorReport", () => {
 						chains: [makeChain("user-flow", "user"), makeChain("project-flow", "project")],
 						userDir: path.join(root, "home", ".agents"),
 						projectDir: path.join(root, ".pi", "agents"),
+						userChainDir: path.join(root, "home", ".pi", "agent", "chains"),
+						projectChainDir: path.join(root, ".pi", "chains"),
 						userSettingsPath: path.join(root, "home", ".pi", "agent", "settings.json"),
 						projectSettingsPath: path.join(root, ".pi", "settings.json"),
 					}),

@@ -112,7 +112,7 @@ Inspect
 		);
 		assert.equal(created.isError, false);
 		assert.match(readText(created), /Created chain 'code-analysis.review-flow'/);
-		const filePath = path.join(tempDir, ".pi", "agents", "code-analysis.review-flow.chain.md");
+		const filePath = path.join(tempDir, ".pi", "chains", "code-analysis.review-flow.chain.md");
 		let content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /^name: review-flow$/m);
 		assert.match(content, /^package: code-analysis$/m);
@@ -123,7 +123,7 @@ Inspect
 			ctx,
 		);
 		assert.equal(updated.isError, false);
-		const updatedPath = path.join(tempDir, ".pi", "agents", "review-flow.chain.md");
+		const updatedPath = path.join(tempDir, ".pi", "chains", "review-flow.chain.md");
 		assert.equal(fs.existsSync(filePath), false);
 		content = fs.readFileSync(updatedPath, "utf-8");
 		assert.match(content, /^name: review-flow$/m);

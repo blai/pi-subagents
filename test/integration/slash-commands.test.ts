@@ -181,6 +181,7 @@ function createCommandContext(
 async function withTempProject<T>(prefix: string, fn: (root: string) => Promise<T>): Promise<T> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.mkdirSync(path.join(root, ".pi", "chains"), { recursive: true });
 	try {
 		return await fn(root);
 	} finally {
@@ -189,7 +190,7 @@ async function withTempProject<T>(prefix: string, fn: (root: string) => Promise<
 }
 
 function writeProjectChain(root: string, fileName: string, content: string): void {
-	fs.writeFileSync(path.join(root, ".pi", "agents", fileName), content, "utf-8");
+	fs.writeFileSync(path.join(root, ".pi", "chains", fileName), content, "utf-8");
 }
 
 async function captureSlashCommandParams(
@@ -711,9 +712,9 @@ Project chain task
 `);
 
 			const { params } = await captureSlashCommandParams("run-chain", "review-flow -- Shared task", root, () => {
-				const userAgentsDir = path.join(os.homedir(), ".agents");
-				fs.mkdirSync(userAgentsDir, { recursive: true });
-				fs.writeFileSync(path.join(userAgentsDir, "review-flow.chain.md"), `---
+				const userChainsDir = path.join(os.homedir(), ".pi", "agent", "chains");
+				fs.mkdirSync(userChainsDir, { recursive: true });
+				fs.writeFileSync(path.join(userChainsDir, "review-flow.chain.md"), `---
 name: review-flow
 description: User review flow
 ---

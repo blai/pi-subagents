@@ -130,6 +130,10 @@ interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
+export function getUserChainDir(): string {
+	return path.join(os.homedir(), ".pi", "agent", "chains");
+}
+
 function splitToolList(rawTools: string[] | undefined): { tools?: string[]; mcpDirectTools?: string[] } {
 	const mcpDirectTools: string[] = [];
 	const tools: string[] = [];
@@ -705,6 +709,17 @@ function resolveNearestProjectAgentDirs(cwd: string): { readDirs: string[]; pref
 		preferredDir,
 	};
 }
+
+function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; preferredDir: string | null } {
+	const projectRoot = findNearestProjectRoot(cwd);
+	if (!projectRoot) return { readDirs: [], preferredDir: null };
+
+	const preferredDir = path.join(projectRoot, ".pi", "chains");
+	return {
+		readDirs: isDirectory(preferredDir) ? [preferredDir] : [],
+		preferredDir,
+	};
+}
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
@@ -742,12 +757,16 @@ export function discoverAgentsAll(cwd: string): {
 	chains: ChainConfig[];
 	userDir: string;
 	projectDir: string | null;
+	userChainDir: string;
+	projectChainDir: string | null;
 	userSettingsPath: string;
 	projectSettingsPath: string | null;
 } {
 	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
+	const userChainDir = getUserChainDir();
 	const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
+	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
 	const userSettings = readSubagentSettings(userSettingsPath);
@@ -773,18 +792,17 @@ export function discoverAgentsAll(cwd: string): {
 	const project = Array.from(projectMap.values());
 
 	const chainMap = new Map<string, ChainConfig>();
-	for (const dir of projectDirs) {
+	for (const dir of projectChainDirs) {
 		for (const chain of loadChainsFromDir(dir, "project")) {
 			chainMap.set(chain.name, chain);
 		}
 	}
 	const chains = [
-		...loadChainsFromDir(userDirOld, "user"),
-		...loadChainsFromDir(userDirNew, "user"),
+		...loadChainsFromDir(userChainDir, "user"),
 		...Array.from(chainMap.values()),
 	];
 
 	const userDir = fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
-	return { builtin, user, project, chains, userDir, projectDir, userSettingsPath, projectSettingsPath };
+	return { builtin, user, project, chains, userDir, projectDir, userChainDir, projectChainDir, userSettingsPath, projectSettingsPath };
 }

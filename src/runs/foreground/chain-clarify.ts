@@ -9,9 +9,8 @@ import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentConfig, ChainConfig, ChainStepConfig } from "../../agents/agents.ts";
+import { getUserChainDir, type AgentConfig, type ChainConfig, type ChainStepConfig } from "../../agents/agents.ts";
 import type { ResolvedStepBehavior } from "../../shared/settings.ts";
 import type { TextEditorState } from "../../tui/text-editor.ts";
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "../../tui/text-editor.ts";
@@ -317,7 +316,7 @@ export class ChainClarifyComponent implements Component {
 				return;
 			}
 			try {
-				const dir = path.join(os.homedir(), ".pi", "agent", "agents");
+				const dir = getUserChainDir();
 				fs.mkdirSync(dir, { recursive: true });
 				const filePath = path.join(dir, `${name}.chain.md`);
 				const config = this.buildChainConfig(name);

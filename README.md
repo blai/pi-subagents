@@ -403,7 +403,7 @@ Agent locations, lowest to highest priority:
 | User | `~/.pi/agent/agents/**/*.md` |
 | Project | `.pi/agents/**/*.md` |
 
-Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files are treated as chains, not agents. If both `.agents/` and `.pi/agents/` define the same parsed runtime agent name, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
+Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files do not define agents. If both `.agents/` and `.pi/agents/` define the same parsed runtime agent name, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
 
 Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.agentOverrides.<name>.model`. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `worker` is the implementation agent for normal tasks and approved oracle handoffs.
 
@@ -533,14 +533,14 @@ When `extensions` is present, it takes precedence over extension paths implied b
 
 ## Chain files
 
-Chains are reusable `.chain.md` workflows stored next to agent files.
+Chains are reusable `.chain.md` workflows stored separately from agent files.
 
 | Scope | Path |
 |-------|------|
-| User | `~/.pi/agent/agents/**/*.chain.md` |
-| Project | `.pi/agents/**/*.chain.md` |
+| User | `~/.pi/agent/chains/**/*.chain.md` |
+| Project | `.pi/chains/**/*.chain.md` |
 
-Project discovery also reads legacy `.agents/**/*.chain.md` files. Nested subdirectories are discovered recursively. If both locations define the same parsed runtime chain name, `.pi/agents/` wins. Chains support the same optional `package` frontmatter as agents; `name: review-flow` plus `package: code-analysis` runs as `code-analysis.review-flow`.
+Nested subdirectories are discovered recursively. If user and project scopes define the same parsed runtime chain name, the project chain wins. Chains support the same optional `package` frontmatter as agents; `name: review-flow` plus `package: code-analysis` runs as `code-analysis.review-flow`.
 
 Example:
 

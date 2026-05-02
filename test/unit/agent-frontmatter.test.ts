@@ -342,7 +342,9 @@ describe("packaged agent and chain discovery", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-recursive-agent-discovery-"));
 		tempDirs.push(dir);
 		const nestedDir = path.join(dir, ".pi", "agents", "code-analysis", "deep");
+		const nestedChainDir = path.join(dir, ".pi", "chains", "code-analysis", "deep");
 		fs.mkdirSync(nestedDir, { recursive: true });
+		fs.mkdirSync(nestedChainDir, { recursive: true });
 		fs.writeFileSync(path.join(nestedDir, "scout.md"), `---
 name: scout
 description: Nested scout
@@ -350,7 +352,7 @@ description: Nested scout
 
 Inspect code
 `, "utf-8");
-		fs.writeFileSync(path.join(nestedDir, "review.chain.md"), `---
+		fs.writeFileSync(path.join(nestedChainDir, "review.chain.md"), `---
 name: review-flow
 description: Review flow
 ---
@@ -362,7 +364,7 @@ Review
 
 		const result = discoverAgentsAll(dir);
 		assert.ok(result.project.find((agent) => agent.name === "scout" && agent.filePath === path.join(nestedDir, "scout.md")));
-		assert.ok(result.chains.find((chain) => chain.name === "review-flow" && chain.filePath === path.join(nestedDir, "review.chain.md")));
+		assert.ok(result.chains.find((chain) => chain.name === "review-flow" && chain.filePath === path.join(nestedChainDir, "review.chain.md")));
 		assert.equal(result.project.some((agent) => agent.filePath.endsWith("review.chain.md")), false);
 	});
 
@@ -393,7 +395,7 @@ Inspect code
 	it("recursively discovers packaged chains by runtime name and preserves package on serialize", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-chain-"));
 		tempDirs.push(dir);
-		const nestedDir = path.join(dir, ".pi", "agents", "flows");
+		const nestedDir = path.join(dir, ".pi", "chains", "flows");
 		fs.mkdirSync(nestedDir, { recursive: true });
 		const content = `---
 name: review-flow
@@ -477,7 +479,9 @@ Inspect
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-normalize-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
+		const chainsDir = path.join(dir, ".pi", "chains");
 		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.mkdirSync(chainsDir, { recursive: true });
 		fs.writeFileSync(path.join(agentsDir, "scout.md"), `---
 name: scout
 package: Code Analysis!
@@ -486,7 +490,7 @@ description: Fast recon
 
 Inspect
 `, "utf-8");
-		fs.writeFileSync(path.join(agentsDir, "review.chain.md"), `---
+		fs.writeFileSync(path.join(chainsDir, "review.chain.md"), `---
 name: review-flow
 package: Code Analysis!
 description: Review flow
@@ -506,7 +510,9 @@ Review
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-package-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
+		const chainsDir = path.join(dir, ".pi", "chains");
 		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.mkdirSync(chainsDir, { recursive: true });
 		fs.writeFileSync(path.join(agentsDir, "scout.md"), `---
 name: scout
 package: !!!
@@ -515,7 +521,7 @@ description: Fast recon
 
 Inspect
 `, "utf-8");
-		fs.writeFileSync(path.join(agentsDir, "review.chain.md"), `---
+		fs.writeFileSync(path.join(chainsDir, "review.chain.md"), `---
 name: review-flow
 package: !!!
 description: Review flow
@@ -597,21 +603,21 @@ Canonical prompt
 		assert.equal(result.projectDir, path.join(dir, ".pi", "agents"));
 	});
 
-	it("discovers project chains from both .agents and .pi/agents", () => {
+	it("discovers project chains from .pi/chains", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-chain-dirs-"));
 		tempDirs.push(dir);
-		fs.mkdirSync(path.join(dir, ".agents", "skills"), { recursive: true });
 		fs.mkdirSync(path.join(dir, ".pi", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(dir, ".agents", "legacy.chain.md"), `---
-name: legacy-chain
-description: Legacy chain
+		fs.mkdirSync(path.join(dir, ".pi", "chains", "flows"), { recursive: true });
+		fs.writeFileSync(path.join(dir, ".pi", "agents", "ignored.chain.md"), `---
+name: ignored-chain
+description: Ignored chain
 ---
 
 ## scout
 
-Inspect legacy
+Ignore
 `, "utf-8");
-		fs.writeFileSync(path.join(dir, ".pi", "agents", "canonical.chain.md"), `---
+		fs.writeFileSync(path.join(dir, ".pi", "chains", "flows", "canonical.chain.md"), `---
 name: canonical-chain
 description: Canonical chain
 ---
@@ -622,40 +628,58 @@ Inspect canonical
 `, "utf-8");
 
 		const result = discoverAgentsAll(dir);
-		assert.ok(result.chains.find((chain) => chain.name === "legacy-chain" && chain.filePath === path.join(dir, ".agents", "legacy.chain.md")));
-		assert.ok(result.chains.find((chain) => chain.name === "canonical-chain" && chain.filePath === path.join(dir, ".pi", "agents", "canonical.chain.md")));
+		assert.equal(result.chains.some((chain) => chain.name === "ignored-chain"), false);
+		assert.ok(result.chains.find((chain) => chain.name === "canonical-chain" && chain.filePath === path.join(dir, ".pi", "chains", "flows", "canonical.chain.md")));
 		assert.equal(result.projectDir, path.join(dir, ".pi", "agents"));
+		assert.equal(result.projectChainDir, path.join(dir, ".pi", "chains"));
 	});
 
-	it("prefers .pi/agents over .agents on project chain name collisions", () => {
+	it("prefers project .pi/chains over user chains on name collisions", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-chain-collision-"));
-		tempDirs.push(dir);
-		fs.mkdirSync(path.join(dir, ".agents"), { recursive: true });
-		fs.mkdirSync(path.join(dir, ".pi", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(dir, ".agents", "shared.chain.md"), `---
+		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-chain-home-"));
+		tempDirs.push(dir, home);
+		const oldHome = process.env.HOME;
+		const oldUserProfile = process.env.USERPROFILE;
+		process.env.HOME = home;
+		process.env.USERPROFILE = home;
+		try {
+			const userChainsDir = path.join(home, ".pi", "agent", "chains");
+			fs.mkdirSync(userChainsDir, { recursive: true });
+			fs.mkdirSync(path.join(dir, ".pi", "chains"), { recursive: true });
+			fs.writeFileSync(path.join(userChainsDir, "shared.chain.md"), `---
 name: shared-chain
-description: Legacy chain
+description: User chain
 ---
 
 ## scout
 
-Inspect legacy
+Inspect user
 `, "utf-8");
-		fs.writeFileSync(path.join(dir, ".pi", "agents", "shared.chain.md"), `---
+			fs.writeFileSync(path.join(dir, ".pi", "chains", "shared.chain.md"), `---
 name: shared-chain
-description: Canonical chain
+description: Project chain
 ---
 
 ## worker
 
-Inspect canonical
+Inspect project
 `, "utf-8");
 
-		const shared = discoverAgentsAll(dir).chains.find((chain) => chain.name === "shared-chain");
-		assert.ok(shared);
-		assert.equal(shared.filePath, path.join(dir, ".pi", "agents", "shared.chain.md"));
-		assert.equal(shared.description, "Canonical chain");
-		assert.equal(shared.steps[0]?.agent, "worker");
-		assert.equal(shared.steps[0]?.task, "Inspect canonical");
+			const sharedChains = discoverAgentsAll(dir).chains.filter((chain) => chain.name === "shared-chain");
+			assert.equal(sharedChains.length, 2);
+			assert.deepEqual(sharedChains.map((chain) => chain.source), ["user", "project"]);
+			const savedChainLookup = new Map(sharedChains.map((chain) => [chain.name, chain]));
+			const shared = savedChainLookup.get("shared-chain");
+			assert.ok(shared);
+			assert.equal(shared.filePath, path.join(dir, ".pi", "chains", "shared.chain.md"));
+			assert.equal(shared.description, "Project chain");
+			assert.equal(shared.steps[0]?.agent, "worker");
+			assert.equal(shared.steps[0]?.task, "Inspect project");
+		} finally {
+			if (oldHome === undefined) delete process.env.HOME;
+			else process.env.HOME = oldHome;
+			if (oldUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = oldUserProfile;
+		}
 	});
 });
