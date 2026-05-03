@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { formatAsyncRunList, listAsyncRuns, listAsyncRunsForOverlay } from "../../src/runs/background/async-status.ts";
+import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
@@ -16,6 +16,7 @@ describe("async status helpers", () => {
 	it("lists only requested states and includes flattened step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-"));
 		try {
+			const outputFile = path.join(root, "run-a", "output-1.log");
 			createAsyncDir(root, "run-a", {
 				runId: "run-a",
 				mode: "chain",
@@ -24,6 +25,7 @@ describe("async status helpers", () => {
 				lastUpdate: 200,
 				cwd: "/repo-a",
 				currentStep: 1,
+				outputFile,
 				steps: [
 					{ agent: "scout", status: "complete", durationMs: 10 },
 					{ agent: "worker", status: "running", durationMs: 20 },
@@ -45,78 +47,7 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps.length, 2);
 			assert.equal(runs[0]?.steps[1]?.agent, "worker");
 			assert.equal(runs[0]?.steps[1]?.status, "running");
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("orders recent overlay runs by recency instead of failure-first state ranking", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recent-order-"));
-		try {
-			createAsyncDir(root, "older-failed", {
-				runId: "older-failed",
-				mode: "single",
-				state: "failed",
-				startedAt: 10,
-				lastUpdate: 100,
-				endedAt: 100,
-				steps: [{ agent: "worker", status: "failed" }],
-			});
-			createAsyncDir(root, "newer-complete", {
-				runId: "newer-complete",
-				mode: "single",
-				state: "complete",
-				startedAt: 20,
-				lastUpdate: 200,
-				endedAt: 200,
-				steps: [{ agent: "reviewer", status: "complete" }],
-			});
-
-			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 5 });
-			assert.deepEqual(overlay.recent.map((run) => run.id), ["newer-complete", "older-failed"]);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("filters overlay runs by session before applying the recent limit", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-session-overlay-"));
-		try {
-			for (let index = 0; index < 5; index++) {
-				createAsyncDir(root, `other-${index}`, {
-					runId: `other-${index}`,
-					sessionId: "session-other",
-					mode: "single",
-					state: "complete",
-					startedAt: 100 + index,
-					lastUpdate: 1_000 + index,
-					endedAt: 1_000 + index,
-					steps: [{ agent: "other", status: "complete" }],
-				});
-			}
-			createAsyncDir(root, "current-running", {
-				runId: "current-running",
-				sessionId: "session-current",
-				mode: "single",
-				state: "running",
-				startedAt: 50,
-				lastUpdate: 60,
-				steps: [{ agent: "worker", status: "running" }],
-			});
-			createAsyncDir(root, "current-complete", {
-				runId: "current-complete",
-				sessionId: "session-current",
-				mode: "single",
-				state: "complete",
-				startedAt: 40,
-				lastUpdate: 70,
-				endedAt: 70,
-				steps: [{ agent: "worker", status: "complete" }],
-			});
-
-			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 1, sessionId: "session-current" });
-			assert.deepEqual(overlay.active.map((run) => run.id), ["current-running"]);
-			assert.deepEqual(overlay.recent.map((run) => run.id), ["current-complete"]);
+			assert.match(formatAsyncRunList(runs), /output: .*output-1\.log/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -212,13 +143,12 @@ describe("async status helpers", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 
-			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 5 });
-			assert.equal(overlay.active.length, 0);
-			assert.equal(overlay.recent[0]?.id, "run-paused");
-			assert.equal(overlay.recent[0]?.activityState, undefined);
-			assert.equal(overlay.recent[0]?.steps[0]?.activityState, undefined);
+			const runs = listAsyncRuns(root, { states: ["paused"] });
+			assert.equal(runs[0]?.id, "run-paused");
+			assert.equal(runs[0]?.activityState, undefined);
+			assert.equal(runs[0]?.steps[0]?.activityState, undefined);
 
-			const text = formatAsyncRunList(overlay.recent, "Recent async runs");
+			const text = formatAsyncRunList(runs, "Paused async runs");
 			assert.match(text, /run-paused \| paused/);
 			assert.match(text, /worker \| complete/);
 			assert.doesNotMatch(text, /paused\/paused/);
@@ -466,51 +396,6 @@ describe("async status helpers", () => {
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
 			assert.match(text, /step 1\/2/);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("separates active and recent runs for the overlay and formats readable list output", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-overlay-"));
-		try {
-			createAsyncDir(root, "run-running", {
-				runId: "run-running",
-				mode: "chain",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 300,
-				steps: [{ agent: "scout", status: "running", durationMs: 12_000 }],
-			});
-			createAsyncDir(root, "run-failed", {
-				runId: "run-failed",
-				mode: "single",
-				state: "failed",
-				startedAt: 50,
-				lastUpdate: 250,
-				endedAt: 250,
-				steps: [{ agent: "worker", status: "failed", durationMs: 5_000 }],
-			});
-			createAsyncDir(root, "run-complete", {
-				runId: "run-complete",
-				mode: "single",
-				state: "complete",
-				startedAt: 10,
-				lastUpdate: 200,
-				endedAt: 200,
-				steps: [{ agent: "reviewer", status: "complete", durationMs: 3_000 }],
-			});
-
-			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 1 });
-			assert.equal(overlay.active.length, 1);
-			assert.equal(overlay.active[0]?.id, "run-running");
-			assert.equal(overlay.recent.length, 1);
-			assert.equal(overlay.recent[0]?.id, "run-failed");
-
-			const text = formatAsyncRunList(overlay.active);
-			assert.match(text, /Active async runs: 1/);
-			assert.match(text, /run-running/);
-			assert.match(text, /scout/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

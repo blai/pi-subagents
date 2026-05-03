@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { visibleWidth } from "@mariozechner/pi-tui";
 import { tryImport } from "../support/helpers.ts";
 
 interface ClarifyTestModel {
@@ -16,12 +17,17 @@ interface ClarifyTestComponent {
 	modelSelectedIndex: number;
 	filteredModels: ClarifyTestModel[];
 	getEffectiveModel(stepIndex: number): string;
-	buildChainConfig(name: string): { steps: Array<{ outputMode?: string }> };
 	applyThinkingLevel(level: "high"): void;
 	enterModelSelector(): void;
 	enterThinkingSelector(): void;
 	renderThinkingSelector(): string[];
 	handleModelSelectorInput(data: string): void;
+	handleInput(data: string): void;
+	render(width: number): string[];
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 interface ClarifyTestModule {
@@ -151,7 +157,7 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 		assert.equal(component.getEffectiveModel(0), "test/basic-model");
 	});
 
-	it("preserves file-only output mode when saving a chain", () => {
+	it("does not expose persistent save shortcuts", () => {
 		const component = new ChainClarifyComponent(
 			{ requestRender() {} },
 			{ fg(_key: string, text: string) { return text; } },
@@ -168,7 +174,45 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			["Task"],
 			"Task",
 			undefined,
-			[{ output: "report.md", outputMode: "file-only", reads: false, progress: false, skills: [], model: undefined }],
+			[{ output: false, outputMode: "inline", reads: false, progress: false, skills: [], model: undefined }],
+			[],
+			undefined,
+			[],
+			() => {},
+			"chain",
+		);
+
+		const initial = component.render(84).join("\n");
+		assert.doesNotMatch(initial, /\bS\b/);
+		assert.doesNotMatch(initial, /\bW\b/);
+
+		component.handleInput("W");
+		const afterSaveChainKey = component.render(84).join("\n");
+		assert.doesNotMatch(afterSaveChainKey, /Save Chain/);
+
+		component.handleInput("S");
+		const afterSaveAgentKey = component.render(84).join("\n");
+		assert.doesNotMatch(afterSaveAgentKey, /Saved agent settings/);
+	});
+
+	it("wraps wide characters inside the runtime editor width", () => {
+		const component = new ChainClarifyComponent(
+			{ requestRender() {} },
+			{ fg(_key: string, text: string) { return text; } },
+			[{
+				name: "worker",
+				description: "",
+				systemPrompt: "",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				source: "user",
+				filePath: "worker.md",
+			}],
+			["界".repeat(60)],
+			"Task",
+			undefined,
+			[{ output: false, outputMode: "inline", reads: false, progress: false, skills: [], model: undefined }],
 			[],
 			undefined,
 			[],
@@ -176,7 +220,12 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			"single",
 		);
 
-		assert.equal(component.buildChainConfig("saved").steps[0]?.outputMode, "file-only");
+		component.handleInput("e");
+		const lines = component.render(84).map(stripAnsi);
+		assert.ok(lines.some((line) => line.includes("界")), "editor should render the wide-character task");
+		for (const line of lines) {
+			assert.ok(visibleWidth(line) <= 84, `line exceeded component width: ${line}`);
+		}
 	});
 
 	it("keeps the current model selected and preserves thinking when switching models", () => {

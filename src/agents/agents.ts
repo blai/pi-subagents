@@ -130,7 +130,7 @@ interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
-export function getUserChainDir(): string {
+function getUserChainDir(): string {
 	return path.join(os.homedir(), ".pi", "agent", "chains");
 }
 

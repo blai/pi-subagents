@@ -90,7 +90,7 @@ Those are ordinary Pi requests. Pi decides whether to call `subagent`, which age
 | Run in the background | “Run this in the background.” |
 | Browse agents | “Show me the available subagents.” |
 | Use a saved workflow | “Run the review chain on this branch.” |
-| See running work | “Show subagent status.” |
+| See running work | “Show active async runs.” |
 | Check setup | “Check whether subagents are configured correctly.” |
 
 The extension ships with builtin agents you can use immediately.
@@ -142,18 +142,14 @@ Use `~/.pi/agent/settings.json` for a user override or `.pi/settings.json` for a
 
 Foreground runs stream progress in the conversation while they run.
 
-Background runs keep working after control returns to you. They show a compact async widget, send completion notifications, and can be inspected with:
+Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`.
 
-```text
-/subagents-status
-```
-
-The status view shows active and recent runs for the current Pi session. Parallel background runs are shown as parallel work, with per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in both progress and results views, so failed or paused agents stay visible next to completed ones.
+They also show a compact async widget and send completion notifications. Parallel background runs show per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones.
 
 You can also ask naturally:
 
 ```text
-Show me the current subagent status.
+Show me the current async runs.
 ```
 
 If something feels misconfigured, run:
@@ -195,6 +191,8 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/gather-context-and-clarify` | Scout/research first, then ask the user the clarification questions that matter. |
 | `/parallel-cleanup` | Run review-only cleanup passes after implementation. |
 
+Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the synthesized fixes worth doing now after reviewers return.
+
 ## Optional pi-intercom companion
 
 `pi-subagents` works without `pi-intercom`. Install `pi-intercom` only if you want child agents to talk back to the parent Pi session while they are running.
@@ -221,7 +219,7 @@ The child can use one dedicated coordination tool:
 
 Child-side routine completion handoffs are still not expected. With the intercom bridge active, parent-side `pi-subagents` sends grouped completion results through `pi-intercom`: one grouped message per foreground parent `subagent` run and one per completed async result file. Acknowledged foreground delivery returns a compact receipt with artifact/session paths; if unacknowledged, the normal full output is preserved. Grouped messages include child intercom targets and full child summaries.
 
-If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `/subagents-status`, interrupting the run, or nudging the child.
+If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
 
 If messages do not show up, run:
 
@@ -243,7 +241,6 @@ Skip this section until you want exact syntax.
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
 | `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` workflow |
-| `/subagents-status` | Open the active/recent run overlay |
 | `/subagents-doctor` | Show read-only setup diagnostics |
 
 Commands validate agent names locally, support tab completion, and send results back into the conversation.
@@ -344,9 +341,6 @@ Common clarify keys:
 - `w` edits output/write behavior where supported
 - `r` edits reads where supported
 - `p` toggles progress tracking where supported
-- `S` saves current overrides to the agent frontmatter
-- `W` saves a chain configuration to `.chain.md`
-
 Picker screens use `↑↓`, `Enter`, `Esc`, and type-to-filter. The full-screen editor supports word wrapping, paste, `Esc` to save, and `Ctrl+C` to discard.
 
 ## Agents and chains
@@ -523,7 +517,7 @@ Each `## agent-name` section is a step. Config lines such as `output`, `outputMo
 
 For `output`, `reads`, `skills`, and `progress`, chain behavior is three-state: omitted inherits from the agent, a value overrides, and `false` disables.
 
-Create chains by saving them from the chain-clarify TUI or writing them by hand. Run them with natural language or:
+Create chains by writing `.chain.md` files directly or with the `subagent({ action: "create", config: ... })` management action. Run them with natural language or:
 
 ```text
 /run-chain scout-planner -- refactor authentication
@@ -896,7 +890,7 @@ Async runs write:
   subagent-log-<id>.md
 ```
 
-`status.json` powers the widget and `/subagents-status`. `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
+`status.json` powers the widget and `subagent({ action: "status" })` output. `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
 
 ## Live progress
 
@@ -982,7 +976,7 @@ The main runtime files are:
 | `src/runs/foreground/execution.ts` | Core foreground `runSync` handling. |
 | `src/runs/background/subagent-runner.ts` | Detached async runner. |
 | `src/runs/background/async-execution.ts` | Background launch support. |
-| `src/runs/background/async-status.ts` / `src/tui/subagents-status.ts` | Status discovery and overlay UI. |
+| `src/runs/background/async-status.ts` | Status discovery and formatting for async runs. |
 | `src/runs/foreground/chain-execution.ts` / `src/agents/chain-serializer.ts` | Chain orchestration and `.chain.md` parsing. |
 | `src/shared/settings.ts` | Chain behavior, instructions, and config helpers. |
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |

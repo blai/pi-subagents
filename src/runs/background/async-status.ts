@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatTokens, shortenPath } from "../../shared/formatters.ts";
-import { type ActivityState, type AsyncParallelGroupStatus, type AsyncStatus, type SubagentRunMode, type TokenUsage } from "../../shared/types.ts";
+import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type SubagentRunMode, type TokenUsage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -9,7 +10,7 @@ import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 interface AsyncRunStepSummary {
 	index: number;
 	agent: string;
-	status: string;
+	status: AsyncJobStep["status"];
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -63,16 +64,6 @@ interface AsyncRunListOptions {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	reconcile?: boolean;
-}
-
-export interface AsyncRunOverlayData {
-	active: AsyncRunSummary[];
-	recent: AsyncRunSummary[];
-}
-
-export interface AsyncRunOverlayOptions {
-	recentLimit?: number;
-	sessionId?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -185,9 +176,9 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 		switch (state) {
 			case "running": return 0;
 			case "queued": return 1;
-		case "failed": return 2;
-		case "paused": return 2;
-		case "complete": return 3;
+			case "failed": return 2;
+			case "paused": return 2;
+			case "complete": return 3;
 		}
 	};
 	return [...runs].sort((a, b) => {
@@ -229,35 +220,15 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	return options.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
 }
 
-export function listAsyncRunsForOverlay(asyncDirRoot: string, options: AsyncRunOverlayOptions = {}): AsyncRunOverlayData {
-	const recentLimit = options.recentLimit ?? 5;
-	const all = listAsyncRuns(asyncDirRoot, { sessionId: options.sessionId });
-	const recent = all
-		.filter((run) => run.state === "complete" || run.state === "failed" || run.state === "paused")
-		.sort((a, b) => (b.lastUpdate ?? b.endedAt ?? b.startedAt) - (a.lastUpdate ?? a.endedAt ?? a.startedAt))
-		.slice(0, recentLimit);
-	return {
-		active: all.filter((run) => run.state === "queued" || run.state === "running"),
-		recent,
-	};
-}
-
 function formatActivityFacts(input: { activityState?: ActivityState; lastActivityAt?: number; currentTool?: string; currentToolStartedAt?: number; currentPath?: string; turnCount?: number; toolCount?: number }): string | undefined {
 	const facts: string[] = [];
-	if (input.currentTool && input.currentToolStartedAt) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
 	else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
 	if (input.currentPath) facts.push(shortenPath(input.currentPath));
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
-	if (!input.lastActivityAt) {
-		if (input.activityState === "needs_attention") return ["needs attention", ...facts].join(" | ");
-		if (input.activityState === "active_long_running") return ["active but long-running", ...facts].join(" | ");
-		return facts.length ? facts.join(" | ") : undefined;
-	}
-	const elapsed = formatDuration(Math.max(0, Date.now() - input.lastActivityAt));
-	if (input.activityState === "needs_attention") return [`no activity for ${elapsed}`, ...facts].join(" | ");
-	if (input.activityState === "active_long_running") return [`active but long-running; last activity ${elapsed} ago`, ...facts].join(" | ");
-	return [`active ${elapsed} ago`, ...facts].join(" | ");
+	const activity = formatActivityLabel(input.lastActivityAt, input.activityState);
+	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 
 function formatStepLine(step: AsyncRunStepSummary): string {
@@ -270,16 +241,9 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	return parts.join(" | ");
 }
 
-function formatParallelProgress(steps: Pick<AsyncRunStepSummary, "status">[], total: number, showRunning: boolean): string {
-	const running = steps.filter((step) => step.status === "running").length;
-	const done = steps.filter((step) => step.status === "complete" || step.status === "completed").length;
-	const failed = steps.filter((step) => step.status === "failed").length;
-	const paused = steps.filter((step) => step.status === "paused").length;
-	const parts = [`${done}/${total} done`];
-	if (showRunning && running > 0) parts.unshift(running === 1 ? "1 agent running" : `${running} agents running`);
-	if (failed > 0) parts.push(`${failed} failed`);
-	if (paused > 0) parts.push(`${paused} paused`);
-	return parts.join(" · ");
+export function formatAsyncRunOutputPath(run: Pick<AsyncRunSummary, "asyncDir" | "outputFile">): string | undefined {
+	if (!run.outputFile) return undefined;
+	return path.isAbsolute(run.outputFile) ? run.outputFile : path.join(run.asyncDir, run.outputFile);
 }
 
 export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | "state" | "currentStep" | "chainStepCount" | "parallelGroups" | "steps">): string {
@@ -291,11 +255,11 @@ export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | 
 		: undefined;
 	if (activeGroup) {
 		const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);
-		const groupLabel = formatParallelProgress(groupSteps, activeGroup.count, run.state === "running");
+		const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, { showRunning: run.state === "running" });
 		if (run.mode === "parallel") return groupLabel;
 		return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
 	}
-	if (run.mode === "parallel") return formatParallelProgress(run.steps, stepCount, run.state === "running");
+	if (run.mode === "parallel") return formatParallelOutcome(run.steps, stepCount, { showRunning: run.state === "running" });
 	if (run.mode === "chain" && run.currentStep !== undefined && groups.length > 0) {
 		const logicalStep = flatToLogicalStepIndex(run.currentStep, chainStepCount, groups);
 		return `step ${logicalStep + 1}/${chainStepCount}`;
@@ -319,6 +283,8 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step)}`);
 		}
+		const outputPath = formatAsyncRunOutputPath(run);
+		if (outputPath) lines.push(`  output: ${shortenPath(outputPath)}`);
 		if (run.sessionFile) lines.push(`  session: ${shortenPath(run.sessionFile)}`);
 		lines.push("");
 	}

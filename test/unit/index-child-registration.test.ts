@@ -3,8 +3,15 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+function parentToolEnv(): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	delete env[SUBAGENT_CHILD_ENV];
+	return env;
+}
 
 describe("subagent extension child mode", () => {
 	it("collapses tool detail before direct subagent tool execution", () => {
@@ -55,7 +62,7 @@ describe("subagent extension child mode", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, stdio: "pipe" },
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
 		);
 	});
 

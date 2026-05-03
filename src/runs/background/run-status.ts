@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import { formatAsyncRunList, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatActivityLabel } from "../../shared/status-format.ts";
 import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
@@ -20,12 +21,6 @@ interface RunStatusDeps {
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
-}
-
-function activityText(activityState: unknown, lastActivityAt: unknown): string | undefined {
-	if (typeof lastActivityAt !== "number") return undefined;
-	const seconds = Math.floor(Math.max(0, Date.now() - lastActivityAt) / 1000);
-	return activityState === "needs_attention" ? `no activity for ${seconds}s` : `active ${seconds}s ago`;
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -119,6 +114,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
+			const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
 			const progressLabel = formatAsyncRunProgressLabel({
 				mode: status.mode,
 				state: status.state,
@@ -129,7 +125,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			});
 			const started = new Date(status.startedAt).toISOString();
 			const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
-			const statusActivityText = status.state === "running" ? activityText(status.activityState, status.lastActivityAt) : undefined;
+			const statusActivityText = status.state === "running" ? formatActivityLabel(status.lastActivityAt, status.activityState) : undefined;
 
 			const lines = [
 				`Run: ${status.runId}`,
@@ -140,13 +136,16 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				`Started: ${started}`,
 				`Updated: ${updated}`,
 				`Dir: ${asyncDir}`,
+				outputPath ? `Output: ${outputPath}` : undefined,
 				reconciliation.message ? `Diagnosis: ${reconciliation.message}` : undefined,
 				reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
 			].filter((line): line is string => Boolean(line));
 			for (const [index, step] of (status.steps ?? []).entries()) {
-				const stepActivityText = step.status === "running" ? activityText(step.activityState, step.lastActivityAt) : undefined;
+				const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
 				const errorText = step.error ? `, error: ${step.error}` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${step.agent} ${step.status}${stepActivityText ? `, ${stepActivityText}` : ""}${errorText}`);
+				const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
+				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
 				if (step.status === "running") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
 				}

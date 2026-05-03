@@ -67,7 +67,7 @@ describe("subagent async widget rendering", () => {
 		], theme, 120);
 
 		const text = lines.join("\n");
-		assert.match(text, /^● Async agents · background · \/subagents-status/);
+		assert.match(text, /^● Async agents · background/);
 		assert.ok(text.indexOf("scout") < text.indexOf("queued"), "running row should precede queued summary");
 		assert.ok(text.indexOf("queued") < text.indexOf("reviewer"), "queued summary should precede completions");
 		assert.match(text, /⎿  read/);
@@ -120,11 +120,11 @@ describe("subagent async widget rendering", () => {
 			assert.equal(typeof widget, "function", "renderWidget should install a component widget, not a capped string-array widget");
 			const lines = (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
 			const text = lines.join("\n");
-			assert.match(text, /async subagent parallel \(3\) · background · \/subagents-status/);
+			assert.match(text, /async subagent parallel \(3\) · background/);
 			assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
 			assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
 			assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
-			assert.match(text, /Press Ctrl\+O for live detail · \/subagents-status for output paths/);
+			assert.match(text, /Press Ctrl\+O for live detail/);
 			assert.doesNotMatch(text, /widget truncated/);
 			assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 		} finally {
@@ -154,7 +154,7 @@ describe("subagent async widget rendering", () => {
 		], theme, 160);
 
 		const text = lines.join("\n");
-		assert.match(text, /async subagent parallel \(3\) · background · \/subagents-status/);
+		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
 		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
 		assert.match(text, /⎿  active now/);

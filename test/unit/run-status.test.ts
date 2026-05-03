@@ -66,6 +66,11 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-parallel");
 			fs.mkdirSync(asyncDir, { recursive: true });
+			const runOutputPath = path.join(asyncDir, "combined-output.log");
+			const firstStepOutputPath = path.join(asyncDir, "output-0.log");
+			const secondStepOutputPath = path.join(asyncDir, "output-1.log");
+			fs.writeFileSync(firstStepOutputPath, "reviewer one", "utf-8");
+			fs.writeFileSync(secondStepOutputPath, "reviewer two", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: "run-parallel",
 				mode: "parallel",
@@ -74,6 +79,7 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 100,
 				currentStep: 0,
+				outputFile: runOutputPath,
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
@@ -93,9 +99,12 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.match(text, /Mode: parallel/);
 			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
+			assert.match(text, new RegExp(`Output: ${runOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, /Agent 1\/3: reviewer running/);
 			assert.match(text, /Agent 2\/3: reviewer running/);
 			assert.match(text, /Agent 3\/3: reviewer pending/);
+			assert.match(text, new RegExp(`  Output: ${firstStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, new RegExp(`  Output: ${secondStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.doesNotMatch(text, /Step 1: reviewer/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

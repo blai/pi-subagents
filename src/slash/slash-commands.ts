@@ -4,9 +4,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey } from "@mariozechner/pi-tui";
 import { discoverAgents, discoverAgentsAll, type ChainConfig } from "../agents/agents.ts";
-import { SubagentsStatusComponent } from "../tui/subagents-status.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { isParallelStep, type ChainStep } from "../shared/settings.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import {
@@ -512,18 +510,6 @@ export function registerSlashCommands(
 		},
 	});
 
-	pi.registerCommand("subagents-status", {
-		description: "Show active and recent async subagent runs",
-		handler: async (_args, ctx) => {
-			const sessionId = resolveCurrentSessionId(ctx.sessionManager);
-			state.baseCwd = ctx.cwd;
-			state.currentSessionId = sessionId;
-			await ctx.ui.custom<void>(
-				(tui, theme, _kb, done) => new SubagentsStatusComponent(tui, theme, () => done(undefined), { sessionId }),
-				{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
-			);
-		},
-	});
 
 	pi.registerCommand("subagents-doctor", {
 		description: "Show subagent diagnostics",

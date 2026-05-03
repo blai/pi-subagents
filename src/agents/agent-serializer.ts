@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import type { AgentConfig } from "./agents.ts";
 import { frontmatterNameForConfig } from "./identity.ts";
 
@@ -82,45 +81,4 @@ export function serializeAgent(config: AgentConfig): string {
 
 	const body = config.systemPrompt ?? "";
 	return `${lines.join("\n")}\n\n${body}\n`;
-}
-
-export function updateFrontmatterField(filePath: string, field: string, value: string | undefined): void {
-	const raw = fs.readFileSync(filePath, "utf-8");
-	const normalized = raw.replace(/\r\n/g, "\n");
-	if (!normalized.startsWith("---")) {
-		throw new Error("Frontmatter not found");
-	}
-
-	const endIndex = normalized.indexOf("\n---", 3);
-	if (endIndex === -1) {
-		throw new Error("Frontmatter not found");
-	}
-
-	const frontmatterBlock = normalized.slice(4, endIndex);
-	const rest = normalized.slice(endIndex + 4);
-	const lines = frontmatterBlock.split("\n");
-
-	const normalizedField = field === "skill" || field === "skills" ? "skills" : field;
-	const targetKeys = field === "skills" ? new Set(["skill", "skills"]) : new Set([field]);
-	let found = false;
-	const updated: string[] = [];
-
-	for (const line of lines) {
-		const match = line.match(/^([\w-]+):\s*(.*)$/);
-		if (match && targetKeys.has(match[1])) {
-			if (value !== undefined) {
-				if (!found) updated.push(`${normalizedField}: ${value}`);
-				found = true;
-			}
-			continue;
-		}
-		updated.push(line);
-	}
-
-	if (value !== undefined && !found) {
-		updated.push(`${normalizedField}: ${value}`);
-	}
-
-	const frontmatter = `---\n${updated.join("\n")}\n---`;
-	fs.writeFileSync(filePath, frontmatter + rest, "utf-8");
 }

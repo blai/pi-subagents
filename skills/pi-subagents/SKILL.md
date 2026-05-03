@@ -33,7 +33,6 @@ Humans often use the slash-command layer instead:
 - `/chain` — launch a chain of steps
 - `/parallel` — launch top-level parallel tasks
 - `/run-chain` — launch a saved `.chain.md` workflow
-- `/subagents-status` — inspect active/recent async runs
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
@@ -287,7 +286,7 @@ const run = subagent({
 // Continue local inspection, then later call status with the returned id.
 ```
 
-Inspect async runs with `subagent({ action: "status", id: "..." })`, `subagent({ action: "status" })` for active runs, or the `/subagents-status` slash command.
+Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs.
 
 Use `resume` for follow-up work after a delegated run:
 
@@ -360,7 +359,7 @@ subagent({
 })
 ```
 
-Chains default to clarify mode unless you explicitly set `clarify: false`.
+Chains default to clarify mode; set `clarify: false` to skip it. Clarify edits affect only the next run; use management actions, settings, or markdown files for persistent changes.
 For programmatic background launches, use `clarify: false, async: true`.
 
 
@@ -543,9 +542,11 @@ The package includes prompt shortcuts for common workflows: `/parallel-review`,
 `/parallel-research`, `/parallel-context-build`, `/parallel-handoff-plan`,
 `/gather-context-and-clarify`, and `/parallel-cleanup`. Use them when the user
 wants repeatable review, research, context handoff, implementation handoff,
-clarification, or cleanup-review patterns. Parent agents can also apply the same
-recipes directly with `subagent(...)` when the user describes the workflow in
-natural language instead of invoking a slash command.
+clarification, or cleanup-review patterns. `/parallel-review autofix` and
+`/parallel-cleanup autofix` synthesize reviewer feedback and then apply only the
+fixes worth doing now. Parent agents can also apply the same recipes directly
+with `subagent(...)` when the user describes the workflow in natural language
+instead of invoking a slash command.
 
 If `pi-prompt-template-model` is installed, additional user prompt templates can delegate into
 `pi-subagents`. This is useful when a slash command should always run through a
@@ -637,7 +638,7 @@ clarify → planner → worker → parallel fresh-context reviewers → worker
 
 The first `worker` implements the approved plan. The parallel reviewers inspect the resulting diff from fresh context. The final `worker` applies synthesized review fixes in forked context. Do not stop after parallel review unless the user explicitly asked for review-only output or the review surfaced a decision that needs approval first.
 
-Keep orchestration authority in the parent session. Child subagents should not launch more subagents, read this skill, or run their own orchestration loops. Spawned subagents do not receive the `pi-subagents` skill, parent-only subagent status/control/slash messages, prior parent `subagent` tool-call/tool-result artifacts, or the `subagent` extension tool. Child context filtering also strips old hidden orchestration-instruction messages when they appear in inherited history. Every child also receives a boundary instruction that says the parent owns orchestration, the child must not propose or run subagents, and implementation children must call real edit/write tools instead of printing pseudo tool calls. Pass children concrete role-specific work instead.
+Keep orchestration authority in the parent session. Child subagents should not launch more subagents, read this skill, or run their own orchestration loops. Spawned subagents do not receive the `pi-subagents` skill, parent-only status/control/slash messages, prior parent `subagent` tool-call/tool-result artifacts, or the `subagent` extension tool. Child context filtering also strips old hidden orchestration-instruction messages when they appear in inherited history. Every child also receives a boundary instruction that says the parent owns orchestration, the child must not propose or run subagents, and implementation children must call real edit/write tools instead of printing pseudo tool calls. Pass children concrete role-specific work instead.
 
 1. Clarify first. This is mandatory. Gather code context with `scout` or `context-builder`, add `researcher` only when external evidence matters, then ask the user clarifying questions with `interview` until scope, acceptance criteria, constraints, and non-goals are clear.
 2. Plan when useful. For complex work, call `planner` or write a plan doc yourself and get approval before implementation. For simple work, confirm shared understanding and explicitly note why planning is skipped.
@@ -742,5 +743,5 @@ subagent({ action: "doctor" })
 
 **Child fails before starting**
 ```typescript
-// Inspect /subagents-status detail, artifact metadata/output logs, and run doctor. Extension loader errors usually appear in child output logs.
+// Inspect `subagent({ action: "status", id: "..." })`, artifact metadata/output logs, and run doctor. Extension loader errors usually appear in child output logs.
 ```

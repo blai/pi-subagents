@@ -2,20 +2,14 @@
  * Chain Clarification TUI Component
  *
  * Shows templates and resolved behaviors for each step in a chain.
- * Supports editing templates, output paths, reads lists, and progress toggle.
+ * Supports runtime editing of templates, output paths, reads lists, and progress toggle.
  */
 
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { getUserChainDir, type AgentConfig, type ChainConfig, type ChainStepConfig } from "../../agents/agents.ts";
+import type { AgentConfig } from "../../agents/agents.ts";
 import type { ResolvedStepBehavior } from "../../shared/settings.ts";
-import type { TextEditorState } from "../../tui/text-editor.ts";
-import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "../../tui/text-editor.ts";
-import { updateFrontmatterField } from "../../agents/agent-serializer.ts";
-import { serializeChain } from "../../agents/chain-serializer.ts";
 import { resolveModelCandidate, splitThinkingSuffix } from "../shared/model-fallback.ts";
 import { findModelInfo, getSupportedThinkingLevels, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
 
@@ -37,6 +31,166 @@ export interface ChainClarifyResult {
 }
 
 type EditMode = "template" | "output" | "reads" | "model" | "thinking" | "skills";
+
+
+interface TextEditorState {
+	buffer: string;
+	cursor: number;
+	viewportOffset: number;
+}
+
+function createEditorState(initial = ""): TextEditorState {
+	return { buffer: initial, cursor: 0, viewportOffset: 0 };
+}
+
+function wrapText(text: string, width: number): { lines: string[]; starts: number[] } {
+	if (width <= 0) return { lines: [text], starts: [0] };
+	if (text.length === 0) return { lines: [""], starts: [0] };
+
+	const lines: string[] = [];
+	const starts: number[] = [];
+	let offset = 0;
+	const segments = text.split("\n");
+	for (const [index, segment] of segments.entries()) {
+		if (segment.length === 0) {
+			starts.push(offset);
+			lines.push("");
+		} else {
+			let lineStart = 0;
+			let pos = 0;
+			let lineWidth = 0;
+			while (pos < segment.length) {
+				const char = String.fromCodePoint(segment.codePointAt(pos)!);
+				const charWidth = visibleWidth(char);
+				if (lineWidth > 0 && lineWidth + charWidth > width) {
+					starts.push(offset + lineStart);
+					lines.push(segment.slice(lineStart, pos));
+					lineStart = pos;
+					lineWidth = 0;
+					continue;
+				}
+				pos += char.length;
+				lineWidth += charWidth;
+			}
+			starts.push(offset + lineStart);
+			lines.push(segment.slice(lineStart));
+		}
+		offset += segment.length + (index < segments.length - 1 ? 1 : 0);
+	}
+	if (!text.endsWith("\n") && text.length > 0 && visibleWidth(lines[lines.length - 1] ?? "") === width) {
+		starts.push(text.length);
+		lines.push("");
+	}
+	return { lines, starts };
+}
+
+function getCursorDisplayPos(cursor: number, starts: number[]): { line: number; col: number } {
+	for (let i = starts.length - 1; i >= 0; i--) {
+		if (cursor >= starts[i]!) return { line: i, col: cursor - starts[i]! };
+	}
+	return { line: 0, col: 0 };
+}
+
+function ensureCursorVisible(cursorLine: number, viewportHeight: number, currentOffset: number): number {
+	if (cursorLine < currentOffset) return Math.max(0, cursorLine);
+	if (cursorLine >= currentOffset + viewportHeight) return Math.max(0, cursorLine - viewportHeight + 1);
+	return Math.max(0, currentOffset);
+}
+
+function isWordChar(ch: string): boolean {
+	const code = ch.charCodeAt(0);
+	return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95;
+}
+
+function wordBackward(buffer: string, cursor: number): number {
+	let pos = cursor;
+	while (pos > 0 && !isWordChar(buffer[pos - 1]!)) pos--;
+	while (pos > 0 && isWordChar(buffer[pos - 1]!)) pos--;
+	return pos;
+}
+
+function wordForward(buffer: string, cursor: number): number {
+	let pos = cursor;
+	while (pos < buffer.length && isWordChar(buffer[pos]!)) pos++;
+	while (pos < buffer.length && !isWordChar(buffer[pos]!)) pos++;
+	return pos;
+}
+
+function normalizeInsertText(data: string): string | null {
+	let text = data.split("\x1b[200~").join("").split("\x1b[201~").join("");
+	text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const newline = text.indexOf("\n");
+	if (newline !== -1) text = text.slice(0, newline);
+	text = text.replace(/\t/g, "    ");
+	if (text.length === 0) return null;
+	for (let i = 0; i < text.length; i++) {
+		if (text.charCodeAt(i) < 32) return null;
+	}
+	return text;
+}
+
+function handleEditorInput(state: TextEditorState, data: string, textWidth: number): TextEditorState | null {
+	if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "return")) return null;
+
+	const { lines: wrapped, starts } = wrapText(state.buffer, textWidth);
+	const cursorPos = getCursorDisplayPos(state.cursor, starts);
+
+	if (matchesKey(data, "alt+left") || matchesKey(data, "ctrl+left")) return { ...state, cursor: wordBackward(state.buffer, state.cursor) };
+	if (matchesKey(data, "alt+right") || matchesKey(data, "ctrl+right")) return { ...state, cursor: wordForward(state.buffer, state.cursor) };
+	if (matchesKey(data, "left")) return state.cursor > 0 ? { ...state, cursor: state.cursor - 1 } : state;
+	if (matchesKey(data, "right")) return state.cursor < state.buffer.length ? { ...state, cursor: state.cursor + 1 } : state;
+	if (matchesKey(data, "up") && cursorPos.line > 0) {
+		const targetLine = cursorPos.line - 1;
+		return { ...state, cursor: starts[targetLine]! + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
+	}
+	if (matchesKey(data, "down") && cursorPos.line < wrapped.length - 1) {
+		const targetLine = cursorPos.line + 1;
+		return { ...state, cursor: starts[targetLine]! + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
+	}
+	if (matchesKey(data, "home")) return { ...state, cursor: starts[cursorPos.line]! };
+	if (matchesKey(data, "end")) return { ...state, cursor: starts[cursorPos.line]! + (wrapped[cursorPos.line]?.length ?? 0) };
+	if (matchesKey(data, "ctrl+home")) return { ...state, cursor: 0 };
+	if (matchesKey(data, "ctrl+end")) return { ...state, cursor: state.buffer.length };
+	if (matchesKey(data, "alt+backspace")) {
+		const target = wordBackward(state.buffer, state.cursor);
+		return target === state.cursor ? state : { ...state, buffer: state.buffer.slice(0, target) + state.buffer.slice(state.cursor), cursor: target };
+	}
+	if (matchesKey(data, "backspace")) {
+		return state.cursor > 0
+			? { ...state, buffer: state.buffer.slice(0, state.cursor - 1) + state.buffer.slice(state.cursor), cursor: state.cursor - 1 }
+			: state;
+	}
+	if (matchesKey(data, "delete")) {
+		return state.cursor < state.buffer.length
+			? { ...state, buffer: state.buffer.slice(0, state.cursor) + state.buffer.slice(state.cursor + 1) }
+			: state;
+	}
+
+	const insert = normalizeInsertText(data);
+	return insert
+		? { ...state, buffer: state.buffer.slice(0, state.cursor) + insert + state.buffer.slice(state.cursor), cursor: state.cursor + insert.length }
+		: null;
+}
+
+function renderWithCursor(text: string, cursorPos: number): string {
+	const before = text.slice(0, cursorPos);
+	const cursorChar = text[cursorPos] ?? " ";
+	const after = text.slice(cursorPos + 1);
+	return `${before}\x1b[7m${cursorChar}\x1b[27m${after}`;
+}
+
+function renderEditor(state: TextEditorState, width: number, viewportHeight: number): string[] {
+	const { lines: wrapped, starts } = wrapText(state.buffer, width);
+	const cursorPos = getCursorDisplayPos(state.cursor, starts);
+	const lines: string[] = [];
+	for (let i = 0; i < viewportHeight; i++) {
+		const lineIdx = state.viewportOffset + i;
+		let content = lineIdx < wrapped.length ? wrapped[lineIdx] ?? "" : "";
+		if (lineIdx === cursorPos.line) content = renderWithCursor(content, cursorPos.col);
+		lines.push(content);
+	}
+	return lines;
+}
 
 /**
  * TUI component for chain clarification.
@@ -61,10 +215,8 @@ export class ChainClarifyComponent implements Component {
 	private skillSelectedNames: Set<string> = new Set();
 	private skillCursorIndex: number = 0;
 	private filteredSkills: Array<{ name: string; source: string; description?: string }> = [];
-	private saveMessage: { text: string; type: "info" | "error" } | null = null;
-	private saveMessageTimer: ReturnType<typeof setTimeout> | null = null;
-	private saveChainNameState: TextEditorState = createEditorState();
-	private savingChain = false;
+	private noticeMessage: { text: string; type: "info" | "error" } | null = null;
+	private noticeMessageTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Run in background (async) mode */
 	private runInBackground = false;
 	private tui: TUI;
@@ -260,171 +412,18 @@ export class ChainClarifyComponent implements Component {
 		this.behaviorOverrides.set(stepIndex, { ...existing, [field]: value });
 	}
 
-	private buildChainConfig(name: string): ChainConfig {
-		const steps: ChainStepConfig[] = [];
-		for (let i = 0; i < this.agentConfigs.length; i++) {
-			const agent = this.agentConfigs[i]!;
-			const behavior = this.getEffectiveBehavior(i);
-			const override = this.behaviorOverrides.get(i);
-			const template = this.templates[i] ?? "";
-			const step: ChainStepConfig = { agent: agent.name, task: template };
-			if (override?.output !== undefined) step.output = behavior.output;
-			if (behavior.outputMode !== "inline") step.outputMode = behavior.outputMode;
-			if (override?.reads !== undefined) step.reads = behavior.reads;
-			if (override?.model !== undefined) step.model = behavior.model;
-			if (override?.skills !== undefined) step.skills = behavior.skills;
-			if (override?.progress !== undefined) step.progress = behavior.progress;
-			steps.push(step);
-		}
-		return {
-			name,
-			description: `Chain: ${steps.map((s) => s.agent).join(" → ")}`,
-			source: "user",
-			filePath: "",
-			steps,
-		};
-	}
-
-	private enterSaveChainName(): void {
-		this.savingChain = true;
-		this.saveChainNameState = createEditorState();
-		this.tui.requestRender();
-	}
-
-	private handleSaveChainNameInput(data: string): void {
-		if (matchesKey(data, "tab")) return;
-		const innerW = this.width - 2;
-		const boxInnerWidth = Math.max(10, innerW - 4);
-		const nextState = handleEditorInput(this.saveChainNameState, data, boxInnerWidth);
-		if (nextState) {
-			this.saveChainNameState = nextState;
-			this.tui.requestRender();
-			return;
-		}
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.savingChain = false;
-			this.saveChainNameState = createEditorState();
-			this.tui.requestRender();
-			return;
-		}
-		if (matchesKey(data, "return")) {
-			const name = this.saveChainNameState.buffer.trim();
-			if (!name) {
-				this.showSaveMessage("Name is required", "error");
-				this.savingChain = false;
-				this.saveChainNameState = createEditorState();
-				return;
-			}
-			try {
-				const dir = getUserChainDir();
-				fs.mkdirSync(dir, { recursive: true });
-				const filePath = path.join(dir, `${name}.chain.md`);
-				const config = this.buildChainConfig(name);
-				config.filePath = filePath;
-				fs.writeFileSync(filePath, serializeChain(config), "utf-8");
-				this.showSaveMessage(`Saved ${name}.chain.md`, "info");
-			} catch (err) {
-				this.showSaveMessage(err instanceof Error ? err.message : String(err), "error");
-			}
-			this.savingChain = false;
-			this.saveChainNameState = createEditorState();
-		}
-	}
-
-	private showSaveMessage(text: string, type: "info" | "error"): void {
-		this.saveMessage = { text, type };
-		if (this.saveMessageTimer) clearTimeout(this.saveMessageTimer);
-		this.saveMessageTimer = setTimeout(() => {
-			this.saveMessage = null;
-			this.saveMessageTimer = null;
+	private showNotice(text: string, type: "info" | "error"): void {
+		this.noticeMessage = { text, type };
+		if (this.noticeMessageTimer) clearTimeout(this.noticeMessageTimer);
+		this.noticeMessageTimer = setTimeout(() => {
+			this.noticeMessage = null;
+			this.noticeMessageTimer = null;
 			this.tui.requestRender();
 		}, 2000);
 		this.tui.requestRender();
 	}
 
-	private arraysEqual(a: string[] | false, b: string[] | false): boolean {
-		if (a === b) return true;
-		if (a === false || b === false) return false;
-		if (a.length !== b.length) return false;
-		for (let i = 0; i < a.length; i++) {
-			if (a[i] !== b[i]) return false;
-		}
-		return true;
-	}
-
-	private saveOverridesToAgent(): void {
-		const stepIndex = this.selectedStep;
-		const agent = this.agentConfigs[stepIndex];
-		if (!agent?.filePath) {
-			this.showSaveMessage("Agent file not found", "error");
-			return;
-		}
-
-		const override = this.behaviorOverrides.get(stepIndex);
-		if (!override) {
-			this.showSaveMessage("No changes to save", "info");
-			return;
-		}
-
-		const base = this.resolvedBehaviors[stepIndex]!;
-		const updates: Array<{ field: string; value: string | undefined }> = [];
-
-		if (override.output !== undefined && override.output !== base.output) {
-			updates.push({
-				field: "output",
-				value: override.output === false ? undefined : override.output,
-			});
-		}
-
-		if (override.reads !== undefined && !this.arraysEqual(override.reads, base.reads)) {
-			updates.push({
-				field: "defaultReads",
-				value: override.reads === false ? undefined : override.reads.join(", "),
-			});
-		}
-
-		if (override.progress !== undefined && override.progress !== base.progress) {
-			updates.push({
-				field: "defaultProgress",
-				value: override.progress ? "true" : undefined,
-			});
-		}
-
-		if (override.skills !== undefined && !this.arraysEqual(override.skills, base.skills)) {
-			updates.push({
-				field: "skills",
-				value: override.skills === false || override.skills.length === 0 ? undefined : override.skills.join(", "),
-			});
-		}
-
-		if (override.model !== undefined) {
-			const baseModel = agent.model ? this.resolveModelFullId(agent.model) : undefined;
-			if (override.model !== baseModel) {
-				updates.push({ field: "model", value: override.model });
-			}
-		}
-
-		if (updates.length === 0) {
-			this.showSaveMessage("No changes to save", "info");
-			return;
-		}
-
-		try {
-			for (const update of updates) {
-				updateFrontmatterField(agent.filePath, update.field, update.value);
-			}
-			this.showSaveMessage("Saved agent settings", "info");
-		} catch (err) {
-			this.showSaveMessage(err instanceof Error ? err.message : String(err), "error");
-		}
-	}
-
 	handleInput(data: string): void {
-		if (this.savingChain) {
-			this.handleSaveChainNameInput(data);
-			return;
-		}
-
 		if (this.editingStep !== null) {
 			if (this.editMode === "model") {
 				this.handleModelSelectorInput(data);
@@ -521,15 +520,6 @@ export class ChainClarifyComponent implements Component {
 			return;
 		}
 
-		if (data === "S") {
-			this.saveOverridesToAgent();
-			return;
-		}
-
-		if (data === "W" && this.mode === "chain") {
-			this.enterSaveChainName();
-			return;
-		}
 	}
 
 	private enterEditMode(mode: EditMode): void {
@@ -646,7 +636,7 @@ export class ChainClarifyComponent implements Component {
 	/** Enter thinking level selector mode */
 	private enterThinkingSelector(): void {
 		if (!this.getEffectiveBehavior(this.selectedStep).model) {
-			this.showSaveMessage("Select a model first", "error");
+			this.showNotice("Select a model first", "error");
 			return;
 		}
 		this.editingStep = this.selectedStep;
@@ -888,32 +878,7 @@ export class ChainClarifyComponent implements Component {
 		}
 	}
 
-	private renderSaveChainName(): string[] {
-		const lines: string[] = [];
-		const innerW = this.width - 2;
-		const boxInnerWidth = Math.max(10, innerW - 4);
-		lines.push(this.renderHeader(" Save Chain "));
-		lines.push(this.row(""));
-		lines.push(this.row(` ${this.theme.fg("dim", "Name:")}`));
-		const top = `┌${"─".repeat(boxInnerWidth)}┐`;
-		const bottom = `└${"─".repeat(boxInnerWidth)}┘`;
-		lines.push(this.row(` ${top}`));
-		const editorState = { ...this.saveChainNameState };
-		const wrapped = wrapText(editorState.buffer, boxInnerWidth);
-		const cursorPos = getCursorDisplayPos(editorState.cursor, wrapped.starts);
-		editorState.viewportOffset = ensureCursorVisible(cursorPos.line, 1, editorState.viewportOffset);
-		const editorLine = renderEditor(editorState, boxInnerWidth, 1)[0] ?? "";
-		lines.push(this.row(` │${this.pad(editorLine, boxInnerWidth)}│`));
-		lines.push(this.row(` ${bottom}`));
-		lines.push(this.row(""));
-		lines.push(this.renderFooter(" [Enter] Save • [Esc] Cancel "));
-		return lines;
-	}
-
 	render(_width: number): string[] {
-		if (this.savingChain) {
-			return this.renderSaveChainName();
-		}
 		if (this.editingStep !== null) {
 			if (this.editMode === "model") {
 				return this.renderModelSelector();
@@ -1141,18 +1106,18 @@ export class ChainClarifyComponent implements Component {
 		const bgLabel = this.runInBackground ? '[b]g:ON' : '[b]g';
 		switch (this.mode) {
 			case 'single':
-				return ` [Enter] Run • [Esc] Cancel • e m t w s ${bgLabel} S `;
+				return ` [Enter] Run • [Esc] Cancel • e m t w s ${bgLabel} `;
 			case 'parallel':
-				return ` [Enter] Run • [Esc] Cancel • e m t s ${bgLabel} S • ↑↓ Nav `;
+				return ` [Enter] Run • [Esc] Cancel • e m t s ${bgLabel} • ↑↓ Nav `;
 			case 'chain':
-				return ` [Enter] Run • [Esc] Cancel • e m t w r p s ${bgLabel} S W • ↑↓ Nav `;
+				return ` [Enter] Run • [Esc] Cancel • e m t w r p s ${bgLabel} • ↑↓ Nav `;
 		}
 	}
 
-	private appendSaveMessage(lines: string[]): void {
-		if (!this.saveMessage) return;
-		const color = this.saveMessage.type === "error" ? "error" : "success";
-		lines.push(this.row(` ${this.theme.fg(color, this.saveMessage.text)}`));
+	private appendNotice(lines: string[]): void {
+		if (!this.noticeMessage) return;
+		const color = this.noticeMessage.type === "error" ? "error" : "success";
+		lines.push(this.row(` ${this.theme.fg(color, this.noticeMessage.text)}`));
 	}
 
 	private renderSingleMode(): string[] {
@@ -1199,7 +1164,7 @@ export class ChainClarifyComponent implements Component {
 
 		lines.push(this.row(""));
 
-		this.appendSaveMessage(lines);
+		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
 
 		return lines;
@@ -1251,7 +1216,7 @@ export class ChainClarifyComponent implements Component {
 			lines.push(this.row(""));
 		}
 
-		this.appendSaveMessage(lines);
+		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
 
 		return lines;
@@ -1354,7 +1319,7 @@ export class ChainClarifyComponent implements Component {
 			lines.push(this.row(""));
 		}
 
-		this.appendSaveMessage(lines);
+		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
 
 		return lines;
@@ -1362,7 +1327,7 @@ export class ChainClarifyComponent implements Component {
 
 	invalidate(): void {}
 	dispose(): void {
-		if (this.saveMessageTimer) clearTimeout(this.saveMessageTimer);
-		this.saveMessageTimer = null;
+		if (this.noticeMessageTimer) clearTimeout(this.noticeMessageTimer);
+		this.noticeMessageTimer = null;
 	}
 }

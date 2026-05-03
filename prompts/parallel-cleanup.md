@@ -42,7 +42,17 @@ While reviewers run, do your own narrow inspection if useful. After they return,
 - optional improvements;
 - feedback to ignore or defer, with a short reason.
 
-Do not blindly apply every reviewer suggestion. Ask before applying fixes unless I already told you to address review feedback.
+Do not blindly apply every reviewer suggestion.
+
+Autofix mode: if the invocation contains the exact word `autofix`, treat it as workflow control, not cleanup scope. Remove it before deciding the cleanup target. After synthesis, apply only fixes worth doing now, validate, and summarize. Do not apply optional improvements unless explicitly requested. If there are no fixes worth doing now, do not edit.
+
+Without autofix mode, ask before applying fixes unless I already told you to address review feedback. When you ask, end with a compact numbered menu so I can respond with a number. Use wording suited to the findings, but include these choices when applicable:
+
+```text
+Reply with [1], [2], or further instructions:
+[1] Apply only the fixes worth doing now.
+[2] Apply the fixes worth doing now plus optional improvements.
+```
 
 Additional scope or focus from the slash command invocation:
 
